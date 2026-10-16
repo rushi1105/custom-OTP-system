@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+lib/
+*.tsbuildinfo
+
+# Test and coverage output
+coverage/
+.vitest/
+
+# Environment files (never commit real values)
+.env
+.env.*
+!.env.example
+
+# Firebase emulator and CLI artifacts
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+functions-debug.log
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local service account files (must never be committed)
+serviceAccountKey*.json
+*-service-account*.json

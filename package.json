@@ -1,0 +1,36 @@
+{
+  "name": "otp-infrastructure-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Provider-independent OTP authentication backend with Firebase identity preservation",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "workspaces": [
+    "functions",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @otp-infra/contracts && npm run build -w @otp-infra/functions",
+    "typecheck": "npm run build -w @otp-infra/contracts && npm run typecheck -w @otp-infra/contracts && npm run typecheck -w @otp-infra/functions",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "emulators": "firebase emulators:start --project demo-otp-infrastructure-service",
+    "clean": "npm run clean --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.19.2",
+    "eslint": "^10.13.0",
+    "firebase-tools": "^15.34.0",
+    "prettier": "^3.9.10",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^5.0.5"
+  }
+}

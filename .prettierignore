@@ -1,0 +1,7 @@
+node_modules/
+dist/
+lib/
+coverage/
+.firebase/
+.vitest/
+package-lock.json
