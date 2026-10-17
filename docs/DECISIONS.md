@@ -81,7 +81,10 @@ Status values: `Proposed` · `Accepted` · `Rejected` · `Superseded` · `Open`.
   reports `confirmedDelivery: false` by contract, and records messages in memory only.
 - **Consequences:** Real adapters must implement the same contract; contract behavior is
   asserted by unit tests that real adapters will inherit/port.
-- **Status:** Accepted and implemented (Phase 1).
+- **Status:** Accepted and implemented (Phase 1). **Partially superseded by D-025**
+  (2026-10-17): `NODE_ENV` is no longer the production gate; provider selection is governed
+  by the explicit `OTP_ENVIRONMENT` policy. The `NODE_ENV` check remains as defense in
+  depth only.
 
 ## D-007 — Target Node.js 22; local development verified on Node 24
 
@@ -233,8 +236,11 @@ Status values: `Proposed` · `Accepted` · `Rejected` · `Superseded` · `Open`.
 - **Rationale:** Phase 2 has no real client; App Check attestation cannot be tested in the
   emulator meaningfully. Rate limits + phone/global caps are the current controls.
 - **Consequences:** Before any production exposure, App Check enforcement and its emulator
-  story must be decided with the client app (Phases 3–6).
-- **Status:** Open — revisit before Phase 3 client testing and Phase 7 hardening.
+  story must be decided with the client app (Phases 3–6). Decision requirement: by the end
+  of Phase 3 client sign-in testing, either (a) adopt App Check (with a documented
+  emulator/local story) or (b) formally accept unauthenticated callable access with
+  compensating controls (phone/global caps, alerting) recorded in the threat model.
+- **Status:** Open — decision required before Phase 3 concludes.
 
 ## D-019 — Delivery job documents do not persist message body or destination
 
@@ -320,3 +326,90 @@ Status values: `Proposed` · `Accepted` · `Rejected` · `Superseded` · `Open`.
   (owner approval required) and must explicitly decide phone-number attachment, existing-UID
   resolution, new-user creation policy, and conflict handling, each with tests.
 - **Status:** Recorded (Phase 2 deliverable); D-013 is the phase-3 decision.
+
+## D-025 — Explicit environment and delivery-provider policy (resolves review defect D1)
+
+- **Date:** 2026-10-17
+- **Context:** The adversarial review confirmed that the mock-provider production guard
+  depended on `NODE_ENV`, which the platform populates (if at all) under an undocumented
+  contract; Google advises against depending on runtime-populated variables. A deployed
+  environment with unset `DELIVERY_PROVIDER` could therefore silently fall back to mock
+  (fail-open to non-delivery).
+- **Alternatives:** continue relying on `NODE_ENV` (rejected); block all mock usage behind a
+  single boolean flag (insufficient: no environment semantics); explicit environment +
+  provider policy (chosen).
+- **Rationale / mechanism:**
+  1. `OTP_ENVIRONMENT` ∈ `local | test | staging | production` is the single source of
+     truth (`functions/src/config/env.ts`).
+  2. Unset `OTP_ENVIRONMENT`: the Firebase emulator (`FUNCTIONS_EMULATOR=true`) resolves to
+     `local`; a deployed runtime (`K_SERVICE` / `K_REVISION` / `FUNCTION_NAME`) fails closed;
+     a plain developer process resolves to `local`.
+  3. Provider selection: `local` defaults to mock; `test` requires an explicit provider and
+     permits mock (approved tests); `staging`/`production` require an explicit non-mock
+     provider. Unknown environment values and unknown provider names always fail closed.
+  4. `createDeliveryProvider` enforces the same rules independently (defense in depth), and
+     `MockDeliveryProvider` keeps its `NODE_ENV=production` guard as a third layer.
+  5. Health reports the resolved environment (or `unconfigured`) via the same resolution
+     logic, never throwing.
+- **Limits:** deployment markers are runtime-populated and could change in a future
+  platform revision; the deployment checklist (roadmap Phase 7) therefore requires
+  `OTP_ENVIRONMENT` to be set explicitly for every deployed environment, with markers only
+  as a fail-closed backstop.
+- **Consequences:** `.env.example`, README, and API contract document the policy; the mock
+  cannot be selected in any deployed environment through configuration or omission.
+- **Evidence:** unit tests in `tests/unit/config.test.ts` (explicit environments, emulator
+  inference, marker fail-closed, unknown values, missing provider, mock rejection in
+  staging/production, defense-in-depth `NODE_ENV` guard) plus the health environment tests;
+  all executed 2026-10-17 (see roadmap Appendix C).
+- **Status:** Accepted (implemented in 0.2.1). Review defect D1 resolved.
+
+## D-026 — Audit-failure monitoring requirement
+
+- **Date:** 2026-10-17
+- **Context:** The review confirmed that `SafeAuditSink` intentionally swallows backend
+  failures (to protect the OTP flow) and logs `audit.write_failed` — but nothing alerts on
+  lost security events.
+- **Alternatives:** let audit failures break the OTP flow (rejected: availability over
+  auditability for transient failures); swallow silently (rejected by review); swallow +
+  require an alerting signal (chosen).
+- **Rationale:** Losing audit events is acceptable for individual transient failures but not
+  silently at scale; an alert converts silent loss into an operational signal.
+- **Consequences / acceptance criteria:** a metric and alert on `audit.write_failed`
+  occurrences must exist before real users (target Phase 5 validation; hard requirement
+  Phase 7). Acceptance: simulated audit outage in staging raises the alert within one
+  alerting window.
+- **Status:** Proposed — required by Phase 5, hard requirement for Phase 7.
+
+## D-027 — Delivery-job reconciliation requirement
+
+- **Date:** 2026-10-17
+- **Context:** The review confirmed that a crash between challenge commit and dispatch (or a
+  failed receipt write) leaves `delivery_jobs` documents in `pending` state with no
+  reconciliation or alerting.
+- **Alternatives:** accept orphaned jobs as harmless (current state); synchronous
+  confirmation (impossible with Firestore + external sends); reconciliation sweep + metrics
+  (chosen direction).
+- **Rationale:** Orphaned jobs mean silent non-delivery and misleading operational data.
+  The Phase 4 job manager already needs claim/lease logic; pending-age reconciliation
+  belongs there.
+- **Consequences / acceptance criteria:** Phase 4 must add reconciliation for jobs stuck in
+  `pending` beyond one challenge TTL and alert on it. Acceptance: an induced
+  crash-before-dispatch in the test environment produces exactly one reconciliation event
+  and one alert, and never a duplicate send (idempotency by `jobId`).
+- **Status:** Proposed — required by Phase 4.
+
+## D-028 — Challenge-purpose semantics must be defined before client exposure
+
+- **Date:** 2026-10-17
+- **Context:** `OTP_PURPOSES` currently contains `sign-in` and `phone-verification`, which
+  are behaviorally identical in Phase 2. The purpose is bound into the challenge and code
+  hash and enforced at verification, but the downstream consequences of each value are not
+  defined.
+- **Alternatives:** remove `phone-verification` from the allowlist until needed; define its
+  semantics in Phase 3 (chosen).
+- **Rationale:** Keeping the binding mechanism exercised is valuable; exposing an
+  undefined-purpose value to clients is not.
+- **Consequences / acceptance criteria:** before Phase 3 client work exposes purposes,
+  record in D-013 what each purpose authorizes (identity resolution behavior, token
+  issuance, account creation) with tests. Until then, clients should use `sign-in` only.
+- **Status:** Open — required decision in Phase 3.

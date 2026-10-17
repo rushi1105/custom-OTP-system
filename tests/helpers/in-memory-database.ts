@@ -9,19 +9,28 @@ interface StoredEntry {
   version: number;
 }
 
-const MAX_TRANSACTION_ATTEMPTS = 50;
+const DEFAULT_MAX_TRANSACTION_ATTEMPTS = 50;
 
 /**
  * In-memory implementation of DocumentDatabase with optimistic concurrency
  * that mirrors Firestore transaction semantics: a transaction detects that a
  * document it read changed before commit and retries, so read-modify-write
  * races resolve to a single winner.
+ *
+ * `maxTransactionAttempts` is configurable so tests can exercise retry
+ * exhaustion deterministically.
  */
 export class InMemoryDocumentDatabase implements DocumentDatabase {
   private readonly entries = new Map<string, StoredEntry>();
+  private readonly maxTransactionAttempts: number;
+
+  constructor(options: { readonly maxTransactionAttempts?: number } = {}) {
+    this.maxTransactionAttempts =
+      options.maxTransactionAttempts ?? DEFAULT_MAX_TRANSACTION_ATTEMPTS;
+  }
 
   async runTransaction<T>(updateFn: (tx: TransactionContext) => Promise<T>): Promise<T> {
-    for (let attempt = 0; attempt < MAX_TRANSACTION_ATTEMPTS; attempt += 1) {
+    for (let attempt = 0; attempt < this.maxTransactionAttempts; attempt += 1) {
       const readVersions = new Map<string, number>();
       const pendingWrites = new Map<string, unknown>();
 
@@ -71,6 +80,17 @@ export class InMemoryDocumentDatabase implements DocumentDatabase {
 
   getDocument<T>(ref: DocumentRef): T | undefined {
     return this.entries.get(storageKey(ref))?.data as T | undefined;
+  }
+
+  listDocuments<T>(collection: string): readonly T[] {
+    const prefix = `${collection}/`;
+    const documents: T[] = [];
+    for (const [key, entry] of this.entries) {
+      if (key.startsWith(prefix)) {
+        documents.push(entry.data as T);
+      }
+    }
+    return documents;
   }
 
   countCollection(collection: string): number {

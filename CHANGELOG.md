@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-17
+
+### Fixed
+
+- **D1 (adversarial review):** environment and delivery-provider selection no longer rely on
+  the implicitly populated `NODE_ENV`. An explicit `OTP_ENVIRONMENT` policy
+  (local/test/staging/production) with fail-closed deployment markers (K_SERVICE,
+  K_REVISION, FUNCTION_NAME) now refuses to guess on deployed runtimes; `staging` and
+  `production` require an explicit non-mock provider; mock is rejected outside local/test
+  (D-025).
+- Strict `OTP_HASH_PEPPER_VERSION` parsing: partial numerics such as `2abc`, `01`, and
+  `1.5` are rejected instead of silently accepted.
+- Bounded input validation before expensive processing: phone inputs are capped at 32
+  characters, challenge IDs are length-checked before regex evaluation, OTP codes are
+  length-checked before character-class evaluation, and requester IP/User-Agent values are
+  trimmed and capped before hashing.
+- Removed the unused `provider_error` challenge-void reason. The resolved
+  `RuntimeConfig.deliveryProviderName` is now actually consumed by the composition root
+  (previously computed and ignored), and the health endpoint reports the resolved
+  environment (or `unconfigured`) via the same resolution logic as the runtime, instead of
+  mirroring a raw `NODE_ENV`.
+- Aligned package and service versions to 0.2.1 (the 0.2.0 changelog entry previously
+  lacked a matching package version bump).
+
+### Added
+
+- Audit tests: `SafeAuditSink` failure swallowing with warning, `FirestoreAuditSink`
+  persisted shape/retention/privacy properties (unit and Firestore-emulator), and direct
+  propagation semantics when the sink is used without the safe wrapper.
+- Request-context tests: IP/User-Agent extraction, unknown fallbacks, hash stability, and
+  bounds.
+- `evaluateWindow` boundary tests: fresh windows, limit blocking without increment, exact
+  retry-after values, window rollover, and stale-state reset.
+- Concurrency tests: global-bucket and requester-limit races resolve to the configured cap;
+  30-way in-memory consumption race; deterministic transaction retry exhaustion that
+  surfaces errors without corrupting state.
+- Input-size abuse tests at the handler level.
+- Global-bucket contention test added to the Firestore-emulator suite.
+
+### Changed
+
+- `createDeliveryProvider` now takes an already-validated provider name and environment;
+  configuration validation lives in `loadRuntimeConfig` (single source of truth).
+
 ## [0.2.0] - 2026-10-17
 
 ### Added

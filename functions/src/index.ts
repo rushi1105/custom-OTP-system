@@ -32,7 +32,7 @@ function getRuntime(): Runtime {
     const config = loadRuntimeConfig(process.env);
     const db = new FirestoreDocumentDatabase(getFirestore(getAdminApp()));
     const logger = new JsonConsoleLogger();
-    const provider = createDeliveryProvider(process.env, clock);
+    const provider = createDeliveryProvider(config.deliveryProviderName, config.environment, clock);
     const dispatcher = new ProviderDeliveryDispatcher(provider, db, logger, clock);
     const audit = new SafeAuditSink(
       new FirestoreAuditSink(db, config.policy.auditRetentionSeconds, clock),

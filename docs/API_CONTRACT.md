@@ -24,6 +24,11 @@ Implemented as the `health` Cloud Function. Returns non-sensitive service metada
 (`status`, `service`, `version`, `environment`, `timestamp`). No dependency probing, no
 secrets, no configuration values.
 
+`environment` reports the resolved runtime environment (`local` / `test` / `staging` /
+`production`) using the same resolution logic as the runtime configuration, or
+`unconfigured` when a deployed runtime is missing explicit configuration (D-025). It never
+throws; health stays available during misconfiguration.
+
 ## 2. `requestOtp` (callable) — Implemented (Phase 2)
 
 Input:

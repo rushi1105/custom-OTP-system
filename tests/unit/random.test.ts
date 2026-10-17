@@ -61,4 +61,11 @@ describe('otp randomness', () => {
     expect(isValidOtpCode('12345a', 6)).toBe(false);
     expect(isValidOtpCode(123456, 6)).toBe(false);
   });
+
+  it('rejects oversized inputs with constant-time length checks', () => {
+    expect(isValidChallengeId(`c_${'A'.repeat(10_000)}`)).toBe(false);
+    expect(isValidChallengeId('c_'.padEnd(10_000, 'A'))).toBe(false);
+    expect(isValidOtpCode('1'.repeat(10_000), 6)).toBe(false);
+    expect(isValidOtpCode('', 6)).toBe(false);
+  });
 });

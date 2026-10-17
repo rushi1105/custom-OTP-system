@@ -31,6 +31,7 @@ describe.skipIf(!process.env['FIRESTORE_EMULATOR_HOST'])(
     let engine: OtpEngine;
     let provider: MockDeliveryProvider;
     let clock: FixedClock;
+    let logger: RecordingLogger;
 
     beforeAll(() => {
       app = initializeApp({ projectId: PROJECT_ID }, 'otp-integration-tests');
@@ -48,19 +49,26 @@ describe.skipIf(!process.env['FIRESTORE_EMULATOR_HOST'])(
       }
       clock = new FixedClock(START_ISO);
       provider = new MockDeliveryProvider({ clock: () => clock.now() });
-      engine = new OtpEngine({
+      logger = new RecordingLogger();
+      engine = buildEngine(DEFAULT_OTP_POLICY);
+    });
+
+    function buildEngine(policy: typeof DEFAULT_OTP_POLICY): OtpEngine {
+      return new OtpEngine({
         db: database,
-        dispatcher: new ProviderDeliveryDispatcher(provider, database, new RecordingLogger(), () =>
-          clock.now(),
-        ),
+        dispatcher: new ProviderDeliveryDispatcher(provider, database, logger, () => clock.now()),
         clock: () => clock.now(),
-        logger: new RecordingLogger(),
+        logger,
         audit: new RecordingAuditSink(),
-        policy: DEFAULT_OTP_POLICY,
+        policy,
         pepper: TEST_PEPPER,
         pepperVersion: 1,
       });
-    });
+    }
+
+    function uniquePhone(index: number): string {
+      return `+9198765432${String(70 + index)}`;
+    }
 
     async function createChallenge(phoneRaw: string = PHONE, requesterHash: string = REQUESTER) {
       const result = await engine.requestChallenge({
@@ -184,6 +192,35 @@ describe.skipIf(!process.env['FIRESTORE_EMULATOR_HOST'])(
       const challenge = await firestore.collection(COLLECTIONS.challenges).doc(challengeId).get();
       expect(challenge.exists).toBe(true);
       expect(challenge.data()).toHaveProperty('ttlAt');
+    });
+
+    it('resolves concurrent global-bucket contention to the configured cap', async () => {
+      const racingEngine = buildEngine({ ...DEFAULT_OTP_POLICY, globalRequestsPerMinute: 3 });
+
+      const results = await Promise.all(
+        Array.from({ length: 6 }, (_, index) =>
+          racingEngine.requestChallenge({
+            phoneRaw: uniquePhone(index),
+            purpose: 'sign-in',
+            requesterHash: `race-requester-${String(index)}`,
+          }),
+        ),
+      );
+
+      expect(results.filter((result) => result.outcome === 'created')).toHaveLength(3);
+      const limited = results.filter((result) => result.outcome === 'rate_limited');
+      expect(limited).toHaveLength(3);
+      for (const result of limited) {
+        if (result.outcome === 'rate_limited') {
+          expect(result.scope).toBe('global');
+        }
+      }
+
+      const challenges = await firestore.collection(COLLECTIONS.challenges).get();
+      expect(challenges.size).toBe(3);
+      const buckets = await firestore.collection(COLLECTIONS.rateLimits).get();
+      expect(buckets.size).toBe(1);
+      expect(buckets.docs[0]?.data()).toMatchObject({ count: 3 });
     });
   },
 );

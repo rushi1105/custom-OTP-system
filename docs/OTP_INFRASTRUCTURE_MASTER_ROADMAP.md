@@ -273,7 +273,9 @@ now`); Firestore TTL policies remain a future storage-retention mechanism only (
   provider acceptance, **not** handset delivery;
 - `capabilities.confirmedDelivery` to declare whether confirmed handset delivery can ever
   be reported; the mock provider reports `false` and must never be instantiated with
-  `NODE_ENV=production` (enforced and tested);
+  `NODE_ENV=production` (enforced and tested); since 0.2.1 the governing gate is the
+  explicit `OTP_ENVIRONMENT`/`DELIVERY_PROVIDER` policy (D-025), with `NODE_ENV` kept only
+  as defense in depth;
 - typed error codes (`INVALID_REQUEST`, `DESTINATION_REJECTED`, `PROVIDER_UNAVAILABLE`,
   `PROVIDER_RATE_LIMITED`, `PROVIDER_AUTH_FAILED`, `UNKNOWN`) with a `retryable` flag.
 
@@ -422,9 +424,14 @@ Summary (**Proposed**; full contracts in `docs/API_CONTRACT.md`):
 
 - CoolBus production project is **never** used for this service's development or testing.
   **Approval required** for any exception.
+- Environment and provider policy (implemented 0.2.1, D-025): every deployed environment
+  MUST set `OTP_ENVIRONMENT` (`test`/`staging`/`production`) and an explicit non-mock
+  `DELIVERY_PROVIDER`; deployed runtimes without explicit configuration fail closed at
+  startup. The local emulator (`FUNCTIONS_EMULATOR=true`) resolves to `local`
+  automatically.
 - Secrets: Cloud Secret Manager with function-level binding via `defineSecret`; local
   emulator uses non-secret placeholders. `.env` files are git-ignored.
-- Deployments are never performed without explicit approval; the Phase 1 repo contains no
+- Deployments are never performed without explicit approval; the repo contains no
   deployment automation beyond local emulator commands.
 
 ---
@@ -542,6 +549,13 @@ Evidence required: official documentation links, provider statements, and — wh
 ### 20.2 Phase 2 — Secure OTP Engine and Backend Foundation
 
 **Status: READY FOR REVIEW** (implementation complete 2026-10-17; evidence in Appendix B)
+
+**Remediation 2026-10-17 (0.2.1):** adversarial-review conditions closed: review defect D1
+fixed via the explicit environment/provider policy (D-025); missing tests added (audit
+sinks, request context, window boundaries, concurrency races, retry exhaustion, input
+bounds); review risks R1–R5 recorded in section 23; remaining limitations tracked in D-018,
+D-026, D-027, D-028. Evidence in Appendix C. Re-review by the owner is required before
+Phase 2 is marked APPROVED.
 
 - **Objective:** trusted OTP engine in isolated dev/test environment with mock provider.
   **Achieved** without touching identity, tokens, or real delivery.
@@ -755,11 +769,34 @@ The full record (context, alternatives, rationale, consequences, status, dates) 
   separation (constraint); D-015 secret management (proposed); D-016 CoolBus rollout
   mechanism (proposed, approval required); D-017 CI provider and remote publishing
   (approval required to publish).
-- D-018 App Check adoption (open); D-019 no message/destination persistence in delivery
-  jobs (Phase 2; revisit in Phase 4); D-020 pepper via environment now / Secret Manager
-  later; D-021 callable functions and IP-control limitations; D-022 error mapping via
-  HttpsError + stable `details.code`; D-023 TTL policy deferred to operations; D-024
-  identity strategy deliberately undecided in Phase 2.
+- D-018 App Check adoption (open, decision required before Phase 3 concludes); D-019 no
+  message/destination persistence in delivery jobs (Phase 2; revisit in Phase 4); D-020
+  pepper via environment now / Secret Manager later; D-021 callable functions and IP-control
+  limitations; D-022 error mapping via HttpsError + stable `details.code`; D-023 TTL policy
+  deferred to operations; D-024 identity strategy deliberately undecided in Phase 2.
+- D-025 explicit environment and delivery-provider policy — **resolves adversarial-review
+  defect D1** (implemented in 0.2.1); D-026 audit-failure monitoring requirement (Phase 5/7);
+  D-027 delivery-job reconciliation requirement (Phase 4); D-028 challenge-purpose semantics
+  required before client exposure (Phase 3).
+
+---
+
+## 23. Remediation register — adversarial review (2026-10-17)
+
+Risks raised by the adversarial review of `8c71ff5` that are accepted for the next phase.
+Each has a mitigation phase and closure criteria; none may be silently dropped.
+
+| ID  | Risk                                                                                              | Mitigation                                                                 | Phase                          | Acceptance criteria                                                                                    | Status               |
+| --- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ | -------------------- |
+| R1  | Global request cap is a shared availability choke point (rotating phones/UA can starve users)     | App Check identity (D-018), abuse detection, alerting; revisit quota shape | 5 / 7                          | Sustained abuse drill shows legitimate traffic unaffected beyond documented quotas and the alert fires | Accepted for Phase 3 |
+| R2  | Per-requester limit key is client-controlled (IP+User-Agent)                                      | App Check / trusted-proxy identity decision (D-018, D-021)                 | 3 (decision) / 7 (enforcement) | Documented decision with tests, or compensating-control acceptance recorded                            | Accepted for Phase 3 |
+| R3  | Orphaned `pending` delivery jobs after crash-before-dispatch; stale `pending` after receipt write | Reconciliation sweep + pending-age metric (D-027)                          | 4                              | Induced crash produces exactly one reconciliation event and one alert, and never a duplicate send      | Accepted for Phase 3 |
+| R4  | Audit losses are silent at scale (`SafeAuditSink` swallows and warns; no alert)                   | Metric + alert on `audit.write_failed` (D-026)                             | 5 / 7                          | Simulated audit outage in staging raises the alert within one alerting window                          | Accepted for Phase 3 |
+| R5  | Cooldown/rate-limit responses reveal recent OTP activity for a phone (activity, not existence)    | Accepted inference leak; revisit if weaponized                             | monitor                        | Recorded in the threat-model residual register                                                         | Accepted             |
+
+Closed by the 0.2.1 remediation: review defect **D1** (fail-closed environment/provider
+policy, D-025) and the review's missing-test list (audit sinks, request context, window
+boundaries, concurrency races, retry exhaustion, input bounds) — evidence in Appendix C.
 
 ---
 
@@ -842,3 +879,51 @@ Honest observations and limitations:
 - GitHub Actions CI integration step for the emulator suite was added to the workflow file
   but **has not been executed on GitHub** (no remote repository; publishing requires owner
   approval D-017). Locally, the equivalent commands pass.
+
+---
+
+## Appendix C — Phase 2 remediation verification record (0.2.1, 2026-10-17)
+
+Executed after the adversarial review of `8c71ff5`, on the same development machine
+(Windows; Node v24.19.0; npm 12.0.2; firebase-tools 15.34.0 via `npx`).
+
+| Check                     | Command                                     | Result                                                              |
+| ------------------------- | ------------------------------------------- | ------------------------------------------------------------------- |
+| Format / Lint / Typecheck | `npm run format:check`, `lint`, `typecheck` | Passed                                                              |
+| Build                     | `npm run build`                             | Passed — contracts + functions at 0.2.1                             |
+| Unit tests                | `npm test`                                  | **14 files, 138 tests passed**, 20 skipped (emulator tests labeled) |
+| Integration + rules       | `npm run test:integration`                  | **3 files, 20 tests passed** against the offline Firestore emulator |
+
+D1 resolution evidence (`tests/unit/config.test.ts`, all passing):
+
+- explicit environments accepted; unknown values fail closed; emulator marker infers
+  `local`; `K_SERVICE`/`K_REVISION`/`FUNCTION_NAME` without explicit config fail closed;
+- `local` defaults to mock; `test` requires explicit provider (mock permitted);
+  `staging`/`production` reject mock and require explicit non-mock provider;
+- `createDeliveryProvider` enforces the same rules independently; the mock's
+  `NODE_ENV=production` guard remains as defense in depth;
+- strict pepper-version parsing (rejects `0`, `01`, `2abc`, `1.5`, `-1`, oversized, empty);
+- health reports resolved environment (`local`/`test`/`staging`/`production`) or
+  `unconfigured` without failing.
+
+New tests added by this remediation: `SafeAuditSink` failure/swallow + warning and
+`FirestoreAuditSink` shape/retention/privacy (unit, in-memory); `FirestoreAuditSink`
+persistence against the real adapter (emulator); request-context extraction, unknown
+fallbacks, stability, and IP/UA bounds; `evaluateWindow` boundary and exact retry-after
+behavior; concurrent global-bucket and requester-limit races resolving to the cap
+(in-memory and emulator); 30-way in-memory consumption race; deterministic transaction
+retry exhaustion without state corruption; input-size abuse at handler level; phone/random
+length bounds.
+
+Honest limitations after remediation:
+
+- Deployment markers (`K_SERVICE` et al.) are still runtime-populated values; no real
+  deployment was performed, so the marker behavior is verified only against simulated
+  environments. The D-025 policy therefore requires explicit `OTP_ENVIRONMENT` in every
+  deployment as the primary mechanism (Phase 7 checklist).
+- The global-cap availability risk (R1), client-controlled requester key (R2), orphaned
+  pending jobs (R3), audit-loss alerting (R4), and activity-inference leak (R5) remain open
+  with tracked acceptance criteria (section 23); none is silently resolved.
+- Emulator tests are not production evidence; production Firestore behavior, real
+  contention at scale, and GCF runtime env behavior remain unverified (no deployment).
+- CI has not been executed remotely (D-017); local equivalents pass.

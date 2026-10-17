@@ -8,7 +8,8 @@ identity, and issues Firebase custom tokens so clients can sign in with
 
 ## Current status
 
-**Phase 2 — Secure OTP Engine and Backend Foundation: READY FOR REVIEW** (Phase 1 APPROVED).
+**Phase 2 — Secure OTP Engine and Backend Foundation: READY FOR REVIEW** (Phase 1
+APPROVED; adversarial review conditions remediated in 0.2.1 — awaiting re-review).
 
 Implemented and tested:
 
@@ -20,8 +21,10 @@ Implemented and tested:
   `health`.
 - Firestore-backed storage with a transaction abstraction; deny-all client security rules
   (tested against the emulator).
-- Mock delivery provider only (production-guarded); delivery is decoupled from verification.
-- 103 automated tests (85 unit + 18 Firestore-emulator integration/security) across
+- Explicit, fail-closed environment and delivery-provider policy (D-025): the mock provider
+  is only selectable in local/test; deployed environments require explicit
+  `OTP_ENVIRONMENT` and a non-mock `DELIVERY_PROVIDER`.
+- 158 automated tests (138 unit + 20 Firestore-emulator integration/security) across
   `tests/unit`, `tests/integration`, `tests/security`.
 
 Not implemented (future phases, explicit approval required): Firebase identity resolution,
@@ -31,8 +34,9 @@ custom tokens, Android relay, real SMS, CoolBus integration, production deployme
 
 - Never point this project at the CoolBus production Firebase project or any production
   credentials.
-- The mock delivery provider refuses to run with `NODE_ENV=production`, and the provider
-  factory fails fast on any unknown provider name.
+- Mock delivery is impossible outside `local`/`test`: `staging`/`production` require an
+  explicit non-mock `DELIVERY_PROVIDER`, and a deployed runtime without explicit
+  `OTP_ENVIRONMENT` fails closed at startup (D-025; `NODE_ENV` is only defense in depth).
 - Local development uses Firebase Emulator Suite demo projects (`demo-*`), which are
   fully offline by convention.
 - No secrets are stored in the repository. `.env.example` contains placeholders only; the

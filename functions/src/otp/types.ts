@@ -4,8 +4,7 @@ import type { OtpPurpose } from './policy.js';
 
 export type ChallengeStatus = 'pending' | 'consumed' | 'expired' | 'locked' | 'void';
 
-export type ChallengeVoidReason =
-  'superseded' | 'delivery_rejected' | 'delivery_failed' | 'provider_error';
+export type ChallengeVoidReason = 'superseded' | 'delivery_rejected' | 'delivery_failed';
 
 export interface ChallengeRecord {
   readonly challengeId: string;

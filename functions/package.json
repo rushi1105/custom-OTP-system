@@ -1,6 +1,6 @@
 {
   "name": "@otp-infra/functions",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Cloud Functions backend for the OTP Infrastructure Service",
   "license": "UNLICENSED",

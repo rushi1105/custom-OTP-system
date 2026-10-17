@@ -89,7 +89,9 @@ flowchart TB
   tested without network.
 - `packages/contracts` defines the delivery-provider contract (types only).
 - `functions/src/delivery/mock-provider.ts` implements the contract in memory, refuses to
-  run with `NODE_ENV=production`, and is unit tested.
+  run with `NODE_ENV=production` (defense in depth), and is unit tested. Since 0.2.1 the
+  governing selector is the explicit `OTP_ENVIRONMENT`/`DELIVERY_PROVIDER` policy (D-025),
+  enforced in `config/env.ts` and `delivery/provider-factory.ts`.
 - No Firestore, no Admin SDK, no Auth, no token issuance, no relay exists yet.
 
 ## 4. Primary data flows (Proposed)

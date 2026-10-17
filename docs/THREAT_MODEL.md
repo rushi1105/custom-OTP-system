@@ -111,6 +111,20 @@ categories with abuse/fraud cases specific to OTP systems (brute force, SMS pump
 - A database leak exposes HMACs, not OTPs: offline guessing against the code hash is
   infeasible without the pepper, and the pepper is not stored in Firestore (D-020).
   Pepper compromise is the primary residual risk for historical challenges.
+- **Global request cap as an availability choke (review R1, accepted for Phase 3):** a
+  single caller rotating phones/User-Agent can saturate the shared 60 requests/minute
+  bucket and block legitimate requests. Mitigation: App Check identity (D-018), abuse
+  detection, and alerting before real users (Phase 5/7). Acceptance criteria for closure:
+  sustained abuse drill shows legitimate traffic unaffected beyond documented quotas.
+- **Cooldown/rate-limit response inference (review R5, accepted):** `RESEND_COOLDOWN`
+  reveals that some OTP activity occurred for a phone within the last 60 s; phone-scope
+  `RATE_LIMITED` reveals 3 requests in 15 min. This is an activity signal, not account
+  existence. Accepted for usability; revisit if weaponized.
+- **Audit loss is silent at scale (review R4):** `SafeAuditSink` swallows failures and logs
+  a warning with no alert. Closed only by D-026 (metric + alert required by Phase 5).
+- **Orphaned pending delivery jobs (review R3):** a crash between commit and dispatch (or a
+  failed receipt write) leaves jobs `pending` with no reconciliation or alert. Closed only
+  by D-027 (Phase 4 reconciliation + metrics).
 
 ## 8. Change control
 

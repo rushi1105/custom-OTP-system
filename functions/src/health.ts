@@ -1,7 +1,9 @@
 import type { Request, Response } from 'express';
 
+import { describeOtpEnvironment } from './config/env.js';
+
 export const SERVICE_NAME = 'otp-infrastructure-service';
-export const SERVICE_VERSION = '0.1.0';
+export const SERVICE_VERSION = '0.2.1';
 
 export interface HealthPayload {
   readonly status: 'ok';
@@ -11,12 +13,15 @@ export interface HealthPayload {
   readonly timestamp: string;
 }
 
-export function buildHealthPayload(clock: () => Date = () => new Date()): HealthPayload {
+export function buildHealthPayload(
+  clock: () => Date = () => new Date(),
+  env: NodeJS.ProcessEnv = process.env,
+): HealthPayload {
   return {
     status: 'ok',
     service: SERVICE_NAME,
     version: SERVICE_VERSION,
-    environment: process.env.NODE_ENV ?? 'development',
+    environment: describeOtpEnvironment(env),
     timestamp: clock().toISOString(),
   };
 }

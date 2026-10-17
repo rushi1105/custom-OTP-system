@@ -35,9 +35,14 @@ export function createEngineFixture(options?: {
   readonly startIso?: string;
   readonly pepper?: string;
   readonly pepperVersion?: number;
+  readonly maxTransactionAttempts?: number;
 }): EngineFixture {
   const clock = new FixedClock(options?.startIso ?? TEST_START_ISO);
-  const db = new InMemoryDocumentDatabase();
+  const db = new InMemoryDocumentDatabase(
+    options?.maxTransactionAttempts !== undefined
+      ? { maxTransactionAttempts: options.maxTransactionAttempts }
+      : {},
+  );
   const logger = new RecordingLogger();
   const audit = new RecordingAuditSink();
   const provider =

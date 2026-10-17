@@ -22,24 +22,24 @@ General rules (enforced by implementation):
 
 ## 1. `otp_challenges/{challengeId}`
 
-| Field                                | Type                                                                           | Notes                                                                                                  |
-| ------------------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `challengeId`                        | string                                                                         | `c_` + 128-bit base64url (CSPRNG); document id                                                         |
-| `purpose`                            | `'sign-in' \| 'phone-verification'`                                            | Bound into the code hash; verify must match                                                            |
-| `phoneHash`                          | string                                                                         | HMAC hex, 64 chars; never the raw number                                                               |
-| `pepperVersion`                      | number                                                                         | Stored so pepper rotation is detectable; rotated peppers invalidate live challenges (max 5 min impact) |
-| `codeHash`                           | string                                                                         | `HMAC-SHA256(pepper, "code:v1:" + salt + ":" + purpose + ":" + code)` hex                              |
-| `salt`                               | string                                                                         | Random 128-bit base64url per challenge                                                                 |
-| `codeLength`                         | number                                                                         | 6 (policy constant)                                                                                    |
-| `attempts`                           | number                                                                         | Incremented atomically per failed verification                                                         |
-| `maxAttempts`                        | number                                                                         | 5 (policy constant)                                                                                    |
-| `status`                             | `'pending' \| 'consumed' \| 'expired' \| 'locked' \| 'void'`                   | State machine per roadmap §7                                                                           |
-| `createdAt`, `expiresAt`             | ISO-8601                                                                       | TTL 300 s (policy constant)                                                                            |
-| `consumedAt`, `lockedAt`, `voidedAt` | ISO-8601 (optional)                                                            | Terminal transition timestamps                                                                         |
-| `voidReason`                         | `'superseded' \| 'delivery_rejected' \| 'delivery_failed' \| 'provider_error'` | Present when voided                                                                                    |
-| `deliveryJobId`                      | string                                                                         | Correlated delivery job                                                                                |
-| `requesterHash`                      | string                                                                         | HMAC of client context for audit correlation                                                           |
-| `ttlAtMs` / `ttlAt`                  | number / Timestamp                                                             | Retention mirror (expiry + 24 h default)                                                               |
+| Field                                | Type                                                         | Notes                                                                                                  |
+| ------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `challengeId`                        | string                                                       | `c_` + 128-bit base64url (CSPRNG); document id                                                         |
+| `purpose`                            | `'sign-in' \| 'phone-verification'`                          | Bound into the code hash; verify must match                                                            |
+| `phoneHash`                          | string                                                       | HMAC hex, 64 chars; never the raw number                                                               |
+| `pepperVersion`                      | number                                                       | Stored so pepper rotation is detectable; rotated peppers invalidate live challenges (max 5 min impact) |
+| `codeHash`                           | string                                                       | `HMAC-SHA256(pepper, "code:v1:" + salt + ":" + purpose + ":" + code)` hex                              |
+| `salt`                               | string                                                       | Random 128-bit base64url per challenge                                                                 |
+| `codeLength`                         | number                                                       | 6 (policy constant)                                                                                    |
+| `attempts`                           | number                                                       | Incremented atomically per failed verification                                                         |
+| `maxAttempts`                        | number                                                       | 5 (policy constant)                                                                                    |
+| `status`                             | `'pending' \| 'consumed' \| 'expired' \| 'locked' \| 'void'` | State machine per roadmap §7                                                                           |
+| `createdAt`, `expiresAt`             | ISO-8601                                                     | TTL 300 s (policy constant)                                                                            |
+| `consumedAt`, `lockedAt`, `voidedAt` | ISO-8601 (optional)                                          | Terminal transition timestamps                                                                         |
+| `voidReason`                         | `'superseded' \| 'delivery_rejected' \| 'delivery_failed'`   | Present when voided                                                                                    |
+| `deliveryJobId`                      | string                                                       | Correlated delivery job                                                                                |
+| `requesterHash`                      | string                                                       | HMAC of client context for audit correlation                                                           |
+| `ttlAtMs` / `ttlAt`                  | number / Timestamp                                           | Retention mirror (expiry + 24 h default)                                                               |
 
 ## 2. `otp_phone_state/{phoneHash}`
 

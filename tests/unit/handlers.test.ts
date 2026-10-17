@@ -3,6 +3,7 @@ import { HttpsError } from 'firebase-functions/v2/https';
 
 import { handleRequestOtp, handleVerifyOtp } from '../../functions/src/api/handlers';
 import { MockDeliveryProvider } from '../../functions/src/delivery/mock-provider';
+import { COLLECTIONS } from '../../functions/src/storage/types';
 import { extractOtpCodeFromMessage, createEngineFixture } from '../helpers/engine-fixture';
 
 const CONTEXT = { requesterHash: 'requester-1' };
@@ -167,5 +168,42 @@ describe('handleVerifyOtp', () => {
 
     expect(error.code).toBe('resource-exhausted');
     expect(error.details).toMatchObject({ code: 'RATE_LIMITED' });
+  });
+});
+
+describe('input bounds', () => {
+  it('rejects oversized externally supplied strings before expensive processing', async () => {
+    const fixture = createEngineFixture();
+    const oversizedDigits = '9'.repeat(100_000);
+
+    const requestError = await captureHttpsError(
+      handleRequestOtp(fixture.engine, { phone: oversizedDigits, purpose: 'sign-in' }, CONTEXT),
+    );
+    expect(requestError.code).toBe('invalid-argument');
+    expect(requestError.details).toEqual({ code: 'INVALID_REQUEST' });
+
+    const verifyErrors = await Promise.all([
+      captureHttpsError(
+        handleVerifyOtp(
+          fixture.engine,
+          { challengeId: `c_${'A'.repeat(100_000)}`, code: '123456', purpose: 'sign-in' },
+          CONTEXT,
+        ),
+      ),
+      captureHttpsError(
+        handleVerifyOtp(
+          fixture.engine,
+          { challengeId: 'c_AAAAAAAAAAAAAAAAAAAAAA', code: oversizedDigits, purpose: 'sign-in' },
+          CONTEXT,
+        ),
+      ),
+    ]);
+    for (const error of verifyErrors) {
+      expect(error.code).toBe('invalid-argument');
+      expect(error.details).toEqual({ code: 'INVALID_REQUEST' });
+    }
+
+    expect(fixture.db.countCollection(COLLECTIONS.challenges)).toBe(0);
+    expect(fixture.db.countCollection(COLLECTIONS.deliveryJobs)).toBe(0);
   });
 });

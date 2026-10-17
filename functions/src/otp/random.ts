@@ -35,10 +35,17 @@ export function generateEventId(): string {
 
 const CHALLENGE_ID_PATTERN = /^c_[A-Za-z0-9_-]{22}$/;
 
+/** `c_` + 128 bits of base64url (22 characters). */
+export const CHALLENGE_ID_LENGTH = 24;
+
 export function isValidChallengeId(value: unknown): value is string {
-  return typeof value === 'string' && CHALLENGE_ID_PATTERN.test(value);
+  return (
+    typeof value === 'string' &&
+    value.length === CHALLENGE_ID_LENGTH &&
+    CHALLENGE_ID_PATTERN.test(value)
+  );
 }
 
 export function isValidOtpCode(value: unknown, length: number): value is string {
-  return typeof value === 'string' && new RegExp(`^\\d{${length}}$`).test(value);
+  return typeof value === 'string' && value.length === length && /^\d+$/.test(value);
 }

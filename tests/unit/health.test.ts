@@ -29,7 +29,7 @@ function createResponseSpy(): {
 
 describe('health', () => {
   it('builds a payload containing only non-sensitive service metadata', () => {
-    const payload = buildHealthPayload(() => new Date('2026-10-17T00:00:00.000Z'));
+    const payload = buildHealthPayload(() => new Date('2026-10-17T00:00:00.000Z'), {});
 
     expect(payload).toMatchObject({
       status: 'ok',
@@ -39,18 +39,21 @@ describe('health', () => {
     });
   });
 
-  it('defaults the environment to development when NODE_ENV is unset', () => {
-    const original = process.env.NODE_ENV;
-    delete process.env.NODE_ENV;
-    try {
-      expect(buildHealthPayload().environment).toBe('development');
-    } finally {
-      if (original === undefined) {
-        delete process.env.NODE_ENV;
-      } else {
-        process.env.NODE_ENV = original;
-      }
-    }
+  it('reports the resolved environment consistently with runtime configuration', () => {
+    expect(buildHealthPayload(undefined, {}).environment).toBe('local');
+    expect(buildHealthPayload(undefined, { OTP_ENVIRONMENT: 'production' }).environment).toBe(
+      'production',
+    );
+    expect(buildHealthPayload(undefined, { FUNCTIONS_EMULATOR: 'true' }).environment).toBe('local');
+  });
+
+  it('reports unconfigured for invalid or deployed-unconfigured environments without failing', () => {
+    expect(buildHealthPayload(undefined, { OTP_ENVIRONMENT: 'bogus' }).environment).toBe(
+      'unconfigured',
+    );
+    expect(buildHealthPayload(undefined, { K_SERVICE: 'otp-service' }).environment).toBe(
+      'unconfigured',
+    );
   });
 
   it('responds with HTTP 200 and the health payload', () => {

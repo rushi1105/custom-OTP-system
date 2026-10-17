@@ -40,4 +40,10 @@ describe('normalizePhone', () => {
     expect(normalizePhone(undefined)).toBeNull();
     expect(normalizePhone({ toString: () => '+919876543210' })).toBeNull();
   });
+
+  it('rejects oversized inputs before normalization work', () => {
+    expect(normalizePhone('9'.repeat(10_000))).toBeNull();
+    expect(normalizePhone(`+91${'9'.repeat(10_000)}`)).toBeNull();
+    expect(normalizePhone('+9'.repeat(20))).toBeNull();
+  });
 });
