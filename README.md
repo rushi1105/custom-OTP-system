@@ -8,29 +8,35 @@ identity, and issues Firebase custom tokens so clients can sign in with
 
 ## Current status
 
-**Phase 1 — Independent Repository and Architecture Foundation: READY FOR REVIEW.**
+**Phase 2 — Secure OTP Engine and Backend Foundation: READY FOR REVIEW** (Phase 1 APPROVED).
 
-This repository currently contains only the Phase 1 foundation:
+Implemented and tested:
 
-- A minimal, runnable Cloud Functions (TypeScript) skeleton with a `health` endpoint.
-- A documented delivery-provider contract (`@otp-infra/contracts`) and a mock delivery
-  provider used for local development only.
-- Unit tests, linting, formatting, type checking, and CI configuration.
-- Architecture, threat model, data model, API contract, decision log, and the master
-  roadmap in `docs/`.
+- Trusted OTP challenge engine: CSPRNG codes, E.164 normalization, HMAC-SHA256 storage with a
+  fail-fast-validated pepper, expiry, attempt limits, single-use atomic consumption,
+  replay/concurrency protection, resend cooldown, per-phone/per-requester/global rate
+  limits, enumeration-resistant responses, privacy-preserving audit events.
+- Callable API: `requestOtp` and `verifyOtp` (Cloud Functions v2, `asia-south1`), plus
+  `health`.
+- Firestore-backed storage with a transaction abstraction; deny-all client security rules
+  (tested against the emulator).
+- Mock delivery provider only (production-guarded); delivery is decoupled from verification.
+- 103 automated tests (85 unit + 18 Firestore-emulator integration/security) across
+  `tests/unit`, `tests/integration`, `tests/security`.
 
-The OTP engine, Firebase identity integration, Android SMS relay, real SMS delivery, and
-CoolBus integration are **not implemented**. They are specified in
-`docs/OTP_INFRASTRUCTURE_MASTER_ROADMAP.md` as future phases and require explicit approval.
+Not implemented (future phases, explicit approval required): Firebase identity resolution,
+custom tokens, Android relay, real SMS, CoolBus integration, production deployment.
 
 ## Safety rules
 
 - Never point this project at the CoolBus production Firebase project or any production
   credentials.
-- The mock delivery provider refuses to run with `NODE_ENV=production`.
+- The mock delivery provider refuses to run with `NODE_ENV=production`, and the provider
+  factory fails fast on any unknown provider name.
 - Local development uses Firebase Emulator Suite demo projects (`demo-*`), which are
   fully offline by convention.
-- No secrets are stored in the repository. `.env.example` contains placeholders only.
+- No secrets are stored in the repository. `.env.example` contains placeholders only; the
+  real pepper is environment-provided (D-020).
 
 ## Requirements
 
@@ -50,34 +56,62 @@ Notes for local development on Node 24 (**decision D-007**):
 ## Quickstart
 
 ```bash
-npm ci                # install workspace dependencies
-npm run build         # compile contracts + functions
-npm run typecheck     # strict TypeScript checks
-npm run lint          # ESLint
-npm run format:check  # Prettier
-npm test              # Vitest unit tests
+npm ci                     # install workspace dependencies
+npm run build              # compile contracts + functions
+npm run typecheck          # strict TypeScript checks
+npm run lint               # ESLint (includes CSPRNG/non-keyed-hash bans)
+npm run format:check       # Prettier
+npm test                   # unit tests (Vitest)
+npm run test:integration   # Firestore-emulator integration + security-rules tests
 ```
 
-Run the Firebase Emulator Suite with a fully offline demo project:
+The integration suite starts its own offline Firestore emulator (Java 11+ required;
+first run downloads the emulator jar) against the `demo-` project:
 
 ```bash
-npm run emulators     # firebase emulators:start --project demo-otp-infrastructure-service
+npm run test:integration
+# equivalent to:
+# firebase emulators:exec --only firestore --project demo-otp-infrastructure-service "vitest run --config vitest.integration.mts"
 ```
+
+Running the full local stack (Functions + Firestore emulators) requires the pepper.
+Copy the example environment and start the emulators:
+
+```bash
+# Windows
+Copy-Item .env.example functions\.env.local
+# macOS/Linux
+cp .env.example functions/.env.local
+
+npm run emulators          # firebase emulators:start --project demo-otp-infrastructure-service
+```
+
+`functions/.env.local` is git-ignored; the committed `.env.example` contains placeholders
+only. The engine validates the pepper on first invocation and fails closed if it is missing
+or shorter than 32 characters.
 
 ## Repository layout
 
 ```
 functions/            Cloud Functions backend (TypeScript)
-  src/health.ts       health endpoint logic (pure + express handler)
-  src/delivery/       delivery adapters (mock provider in Phase 1)
+  src/api/            callable handlers (requestOtp, verifyOtp) + requester context
+  src/audit/          privacy-preserving audit events
+  src/config/         fail-fast environment configuration
+  src/delivery/       delivery contract mock, dispatcher, provider factory
+  src/otp/            policy, phone normalization, CSPRNG, hashing, engine
+  src/storage/        transaction abstraction + Firestore adapter
 packages/contracts/   shared delivery-provider contract (types only)
-tests/unit/           Phase 1 unit tests
+tests/unit/           fast deterministic tests (85)
+tests/integration/    Firestore-emulator engine tests
+tests/security/       Firestore rules denial tests
+tests/helpers/        in-memory database (optimistic concurrency), fixed clock, fakes
+firestore.rules       deny-all client access rules (emulator-tested)
 docs/                 roadmap, architecture, threat model, data model, API contract, decisions
-.github/workflows/    CI (format, lint, typecheck, build, test)
+.github/workflows/    CI (format, lint, typecheck, build, unit + emulator tests)
 ```
 
-Planned modules (`otp/`, `identity/`, `rate-limiting/`, `audit/`, integration/security/e2e
-tests, Android relay) are intentionally not created yet; see the roadmap.
+Planned modules (`identity/`, relay, provider adapters, e2e tests) are intentionally not
+created yet; see the roadmap.
 
 ## Documentation index
 

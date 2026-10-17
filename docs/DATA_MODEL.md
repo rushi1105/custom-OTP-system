@@ -1,134 +1,129 @@
 # Data Model
 
-**Status:** All collections below are **Proposed** for Phases 2–4. **Confirmed** today: no
-Firestore is used at all in Phase 1, and no plaintext OTP/phone data exists anywhere in the
-repository.
+**Status: Implemented in Phase 2** for the collections below (code + unit tests + Firestore
+emulator integration tests). Firestore access rules are implemented and tested
+(`firestore.rules`, `tests/security/firestore-rules.test.ts`).
 
-General rules (**Proposed**, mandatory for implementation):
+General rules (enforced by implementation):
 
-- Firestore security rules deny **all** client access to every collection listed here; only
-  the Admin SDK (backend) reads/writes them.
-- OTP codes are never stored or logged in plaintext; only a keyed hash is stored.
-- Phone numbers are never stored in plaintext; an HMAC of the E.164 number with a versioned
-  pepper is stored instead.
-- Every document carries server timestamps (`createdAt`, `updatedAt` as Firestore
-  timestamps or ISO-8601 UTC).
-- TTL policies are retention mechanisms only. Expiry and attempt limits are enforced by the
-  server clock at verification time.
+- Firestore security rules deny **all** client access to every collection; only the Admin
+  SDK (backend) reads/writes them. Verified by emulator rules tests for both
+  unauthenticated and authenticated contexts.
+- OTP codes are never stored or logged in plaintext; only a keyed HMAC is stored.
+- Phone numbers are never stored in plaintext; only `HMAC-SHA256(pepper, "phone:v1:" + E.164)`
+  is stored. Verified by tests asserting persisted documents and logs contain no phone
+  digits or codes.
+- Delivery job documents deliberately do **not** persist the message body or destination
+  (see "Not stored" below and D-019).
+- Every document carries a numeric `ttlAtMs` field; the Firestore adapter mirrors it to a
+  `ttlAt` timestamp for future Firestore TTL policies (D-023). TTL policies are an
+  operations task and are **not** configured yet; cleanup never gates correctness because
+  expiry is always enforced by the engine clock.
 
-## 1. `otp_challenges/{challengeId}` (Proposed, Phase 2)
+## 1. `otp_challenges/{challengeId}`
 
-| Field                                  | Type                                               | Notes                                                                               |
-| -------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `challengeId`                          | string                                             | Random opaque id (not sequential, not guessable)                                    |
-| `phoneHash`                            | string                                             | HMAC-SHA256(pepper, E.164) hex; never the raw number                                |
-| `codeHash`                             | string                                             | HMAC-SHA256(pepper, challengeSalt + code); salted per challenge                     |
-| `challengeSalt`                        | string                                             | Random per-challenge salt (public is acceptable, kept together for pepper rotation) |
-| `codeLength`                           | number                                             | Default 6                                                                           |
-| `attempts`                             | number                                             | Incremented atomically on each verification attempt                                 |
-| `maxAttempts`                          | number                                             | Default proposed 5 (policy, D-012)                                                  |
-| `status`                               | `'pending' \| 'consumed' \| 'expired' \| 'locked'` | State machine per roadmap §7                                                        |
-| `createdAt`, `expiresAt`, `consumedAt` | timestamp                                          | `expiresAt` default +5 minutes (D-012)                                              |
-| `deliveryJobId`                        | string \| null                                     | Reference to `delivery_jobs`                                                        |
-| `resendCount`                          | number                                             | For cooldown/limit policy                                                           |
-| `pepperVersion`                        | number                                             | Enables pepper rotation without invalidating live challenges                        |
-| `requesterHash`                        | string                                             | HMAC of salted client context (IP/device) for rate limiting; no raw values          |
-| `auditRef`                             | string \| null                                     | Correlation id for audit events                                                     |
+| Field                                | Type                                                                           | Notes                                                                                                  |
+| ------------------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `challengeId`                        | string                                                                         | `c_` + 128-bit base64url (CSPRNG); document id                                                         |
+| `purpose`                            | `'sign-in' \| 'phone-verification'`                                            | Bound into the code hash; verify must match                                                            |
+| `phoneHash`                          | string                                                                         | HMAC hex, 64 chars; never the raw number                                                               |
+| `pepperVersion`                      | number                                                                         | Stored so pepper rotation is detectable; rotated peppers invalidate live challenges (max 5 min impact) |
+| `codeHash`                           | string                                                                         | `HMAC-SHA256(pepper, "code:v1:" + salt + ":" + purpose + ":" + code)` hex                              |
+| `salt`                               | string                                                                         | Random 128-bit base64url per challenge                                                                 |
+| `codeLength`                         | number                                                                         | 6 (policy constant)                                                                                    |
+| `attempts`                           | number                                                                         | Incremented atomically per failed verification                                                         |
+| `maxAttempts`                        | number                                                                         | 5 (policy constant)                                                                                    |
+| `status`                             | `'pending' \| 'consumed' \| 'expired' \| 'locked' \| 'void'`                   | State machine per roadmap §7                                                                           |
+| `createdAt`, `expiresAt`             | ISO-8601                                                                       | TTL 300 s (policy constant)                                                                            |
+| `consumedAt`, `lockedAt`, `voidedAt` | ISO-8601 (optional)                                                            | Terminal transition timestamps                                                                         |
+| `voidReason`                         | `'superseded' \| 'delivery_rejected' \| 'delivery_failed' \| 'provider_error'` | Present when voided                                                                                    |
+| `deliveryJobId`                      | string                                                                         | Correlated delivery job                                                                                |
+| `requesterHash`                      | string                                                                         | HMAC of client context for audit correlation                                                           |
+| `ttlAtMs` / `ttlAt`                  | number / Timestamp                                                             | Retention mirror (expiry + 24 h default)                                                               |
 
-Lifecycle: created (pending) → `consumed` (success, atomic) | `expired` (TTL elapsed) |
-`locked` (max attempts). Terminal states are immutable.
+## 2. `otp_phone_state/{phoneHash}`
 
-Suggested indexes/TTL: TTL policy on `expiresAt`; composite index `phoneHash + createdAt`
-for resend policy; `status + expiresAt` for cleanup jobs.
+| Field                                        | Type               | Notes                                                                                                     |
+| -------------------------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------- |
+| `phoneHash`                                  | string             | Document id                                                                                               |
+| `activeChallengeId`                          | string \| null     | Latest live challenge for this phone; resend voids a still-pending previous challenge                     |
+| `cooldownUntilMs`                            | number \| null     | Resend cooldown (60 s default); cleared when a delivery failure voids the challenge so the user can retry |
+| `requestWindowStartMs`, `requestWindowCount` | number             | Fixed window: 3 requests / 15 min per phone                                                               |
+| `lastRequestedAtMs`                          | number             | Audit/ops visibility                                                                                      |
+| `ttlAtMs` / `ttlAt`                          | number / Timestamp | Retention mirror (24 h)                                                                                   |
 
-## 2. `delivery_jobs/{jobId}` (Proposed, Phase 2/4)
+## 3. `requester_state/{requesterHash}`
 
-| Field                         | Type                                                        | Notes                                                                                            |
-| ----------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `jobId`                       | string                                                      | Unique; also used for provider idempotency                                                       |
-| `challengeId`                 | string                                                      | Owning challenge                                                                                 |
-| `providerId`                  | string                                                      | `mock` \| `relay` \| `msg91`-class                                                               |
-| `channel`                     | `'sms'`                                                     | Matches contract                                                                                 |
-| `destination`                 | string                                                      | E.164; needed at send time only — evaluate storing hashed + transient copy (D-011 open question) |
-| `body`                        | string                                                      | Contains OTP; short retention; consider not persisting at all (open question D-011)              |
-| `status`                      | `'pending' \| 'claimed' \| 'sent' \| 'failed' \| 'expired'` | Provider acceptance is `sent` at most, never "delivered"                                         |
-| `dedupeKey`                   | string                                                      | Prevents duplicate sends for one challenge/resend window                                         |
-| `claimedBy`                   | string \| null                                              | Device id (relay)                                                                                |
-| `claimedAt`, `leaseExpiresAt` | timestamp                                                   | One-time claim lease                                                                             |
-| `attempts`                    | number                                                      | Retry accounting                                                                                 |
-| `lastError`                   | map \| null                                                 | Error code + message (no PII)                                                                    |
-| `createdAt`, `updatedAt`      | timestamp                                                   |                                                                                                  |
+| Field                                        | Type               | Notes                                                          |
+| -------------------------------------------- | ------------------ | -------------------------------------------------------------- |
+| `requesterHash`                              | string             | Document id; HMAC of client IP + User-Agent (never raw values) |
+| `requestWindowStartMs`, `requestWindowCount` | number             | Fixed window: 10 requests / 10 min per requester               |
+| `verifyWindowStartMs`, `verifyWindowCount`   | number             | Fixed window: 20 verifications / 10 min per requester          |
+| `ttlAtMs` / `ttlAt`                          | number / Timestamp | Retention mirror (24 h)                                        |
 
-Invariant: a job is sendable only while its challenge is `pending` and not expired; expired
-jobs are `expired`, never delivered late.
+## 4. `rate_limits/{bucketKey}`
 
-## 3. `delivery_devices/{deviceId}` (Proposed, Phase 4)
+Global request buckets, one document per minute: id `req-global-<windowStartMs>`.
 
-| Field                                  | Type                    | Notes                                           |
-| -------------------------------------- | ----------------------- | ----------------------------------------------- |
-| `deviceId`                             | string                  | Assigned at enrollment                          |
-| `label`                                | string                  | Human label ("relay-sim-1")                     |
-| `credentialHash`                       | string                  | Hash of device credential; never the credential |
-| `status`                               | `'active' \| 'revoked'` | Revocation is immediate for auth checks         |
-| `enrolledAt`, `enrolledBy`             | timestamp, string       | Operator id (audited)                           |
-| `revokedAt`, `revokedReason`           | timestamp, string       |                                                 |
-| `lastSeenAt`, `appVersion`, `simLabel` | mixed                   | Health monitoring                               |
+| Field               | Type               | Notes                                    |
+| ------------------- | ------------------ | ---------------------------------------- |
+| `bucketKey`         | string             | Document id                              |
+| `windowStartMs`     | number             | Minute-aligned window start              |
+| `count`             | number             | 60 requests / minute global default      |
+| `ttlAtMs` / `ttlAt` | number / Timestamp | Retention mirror (1 h past window start) |
 
-## 4. `identity_links/{phoneHash}` (Proposed, Phase 3)
+## 5. `delivery_jobs/{jobId}`
 
-| Field                     | Type                    | Notes                                     |
-| ------------------------- | ----------------------- | ----------------------------------------- |
-| `phoneHash`               | string                  | Document id: HMAC(pepper, E.164)          |
-| `uid`                     | string                  | Canonical Firebase UID                    |
-| `createdAt`, `verifiedAt` | timestamp               | Verified via a consumed challenge         |
-| `createdBy`               | string                  | Flow id (`otp-signin`) for audit          |
-| `status`                  | `'active' \| 'revoked'` | Revocation is an admin-reviewed operation |
+| Field                       | Type                                                | Notes                                                          |
+| --------------------------- | --------------------------------------------------- | -------------------------------------------------------------- |
+| `jobId`                     | string                                              | `j_` + 128-bit base64url; idempotency key for providers        |
+| `challengeId`               | string                                              | Owning challenge                                               |
+| `providerId`                | string                                              | `mock` in Phase 2 (from the dispatcher, not client input)      |
+| `channel`                   | `'sms'`                                             | Contract channel                                               |
+| `status`                    | `'pending' \| 'accepted' \| 'rejected' \| 'failed'` | `accepted` = provider accepted for delivery, never "delivered" |
+| `dedupeKey`                 | string                                              | Challenge id; one job per challenge                            |
+| `attempts`                  | number                                              | Dispatch attempts (0 or 1 in Phase 2; no auto-retry)           |
+| `createdAt`, `updatedAt`    | ISO-8601                                            |                                                                |
+| `receipt.providerMessageId` | string (optional)                                   | Provider-assigned id                                           |
+| `receipt.reportedAt`        | ISO-8601                                            | Provider receipt time                                          |
+| `receipt.errorCode`         | contract error code (optional)                      | e.g. `PROVIDER_UNAVAILABLE`                                    |
+| `receipt.retryable`         | boolean (optional)                                  | Provider-declared retryability                                 |
+| `ttlAtMs` / `ttlAt`         | number / Timestamp                                  | Retention mirror                                               |
 
-Rules: one active link per `phoneHash`; conflict resolution never silently re-points a link
-(D-013). This collection is backend-only and never referenced by clients.
+## 6. `audit_events/{eventId}`
 
-## 5. `rate_limits/{bucketKey}` (Proposed, Phase 2)
+| Field                                          | Type                     | Notes                                                                                                                                                                                                         |
+| ---------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `eventId`                                      | string                   | `a_` + 96-bit base64url                                                                                                                                                                                       |
+| `type`                                         | string                   | `otp.request.created`, `otp.request.blocked`, `otp.request.delivery_failed`, `otp.verification.succeeded`, `otp.verification.failed`, `otp.challenge.locked`, `otp.challenge.voided`, `otp.challenge.expired` |
+| `occurredAt`                                   | ISO-8601                 | Server clock                                                                                                                                                                                                  |
+| `actorType`                                    | `'client' \| 'system'`   |                                                                                                                                                                                                               |
+| `actorHash`                                    | string \| null           | Requester hash; never a raw phone/IP                                                                                                                                                                          |
+| `purpose`, `challengeId`, `jobId`, `phoneHash` | string \| null           | Correlation; `phoneHash` is a 64-hex HMAC                                                                                                                                                                     |
+| `outcome`                                      | `'success' \| 'failure'` |                                                                                                                                                                                                               |
+| `reasonCode`                                   | string \| null           | Stable machine-readable reason (`wrong_code`, `locked`, `expired`, `cooldown`, `phone`, `provider error code`, …)                                                                                             |
+| `ttlAtMs` / `ttlAt`                            | number / Timestamp       | Retention mirror (90 days default)                                                                                                                                                                            |
 
-| Field          | Type              | Notes                                              |
-| -------------- | ----------------- | -------------------------------------------------- |
-| `bucketKey`    | string            | e.g. `req:phone:<hash>:1h`, `verify:ip:<hash>:10m` |
-| `windowStart`  | timestamp         | Fixed-window start                                 |
-| `count`        | number            | Atomic increment per event                         |
-| `blockedUntil` | timestamp \| null | Set when limit exceeded                            |
+Audit writes are best-effort: a failing audit write logs a warning but never breaks the OTP
+flow (`SafeAuditSink`).
 
-TTL on `windowStart` (short, e.g. 24h). Firestore cost/contention trade-off documented in
-D-011; alternative (in-memory/Redis) kept open.
+## 7. Not stored (deliberate)
 
-## 6. `audit_events/{eventId}` (Proposed, Phase 2)
+- **Plaintext OTPs:** code exists only in memory (generation → message → provider) and as a
+  keyed hash at rest.
+- **Plaintext phone numbers:** only `phoneHash` is persisted. The E.164 number is held in
+  memory for the request that created it and passed transiently to the delivery provider.
+- **Message body / destination on job documents (D-019):** Phase 2 does not persist them.
+  Consequence: a job that was never dispatched cannot be replayed after a crash — the
+  challenge simply expires, the user retries, and a database leak can never reveal a live
+  OTP. Phase 4 (relay claims) may need to persist destination/body and will re-open this
+  decision explicitly with retention/encryption requirements.
 
-| Field                                | Type                                             | Notes                                                                                                                                       |
-| ------------------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `eventId`                            | string                                           | Random id                                                                                                                                   |
-| `type`                               | string                                           | `challenge.created`, `challenge.verified`, `challenge.locked`, `device.enrolled`, `device.revoked`, `provider.receipt`, `ratelimit.blocked` |
-| `occurredAt`                         | timestamp                                        | Server clock                                                                                                                                |
-| `actorType`                          | `'system' \| 'client' \| 'device' \| 'operator'` |                                                                                                                                             |
-| `actorHash`                          | string \| null                                   | Hashed identifier; no raw phone/IP                                                                                                          |
-| `challengeId` / `jobId` / `deviceId` | string \| null                                   | Correlation                                                                                                                                 |
-| `outcome`                            | `'success' \| 'failure' \`                       |                                                                                                                                             |
-| `reasonCode`                         | string \| null                                   | Stable machine-readable reason                                                                                                              |
-| `metadata`                           | map                                              | Must never contain codes, tokens, or raw phone numbers                                                                                      |
+## 8. Open questions (tracked)
 
-Retention: proposed 90 days (policy TBD, compliance item 5). TTL policy on `occurredAt`.
-
-## 7. Deliberately absent data
-
-- No plaintext OTPs, ever.
-- No raw phone numbers in audit/log collections.
-- No Firebase credentials in any collection.
-- No client-readable collections: rules will deny everything; the app talks only through the
-  HTTP API and Firebase Auth.
-
-## 8. Open questions (tracked in D-011/D-012/D-013)
-
-1. Whether `delivery_jobs.body` (the OTP) should be persisted at all, or passed transiently
-   to the provider and never stored.
-2. Whether challenge attempt counters can live in the challenge doc under Firestore
-   transaction contention at pilot volume, or need a separate counter strategy.
-3. Retention windows for each collection (compliance-driven).
-4. Whether `identity_links` needs a secondary index collection for UID → phone-hash reverse
-   lookup (only if a future, approved operation requires it).
+1. D-023: Firestore TTL policy configuration for `ttlAt` (operations task; Phase 7).
+2. D-019 extension in Phase 4: relay-claimable job payload storage.
+3. Retention windows per collection (compliance item 5; audit retention currently 90 days
+   as a code default).
+4. Reverse lookup (UID → phone) is intentionally absent; only revisit with an approved
+   Phase 3 requirement.

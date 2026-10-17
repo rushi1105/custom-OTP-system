@@ -1,132 +1,125 @@
 # API Contract
 
-**Status:** Everything below is **Proposed** except `GET /health`, which is **Confirmed**
-implemented in Phase 1. No other endpoint exists in the repository.
+**Status:** `GET` health is **Confirmed** (Phase 1). `requestOtp` and `verifyOtp` are
+**Implemented in Phase 2** as Firebase callable functions (v2, region `asia-south1`).
+Relay endpoints remain **Proposed** (Phase 4). Custom-token issuance is **not implemented**
+(Phase 3).
 
-Conventions (**Proposed**):
+Callable protocol: requests carry `{"data": {...}}`; successful responses carry
+`{"result": {...}}`; errors carry `{"error": {"message", "status", "details"}}` where
+`details.code` is the stable machine-readable code from this document.
 
-- HTTPS only; JSON request/response bodies; UTF-8.
-- Version prefix `/v1`.
-- Server determines all security outcomes; clients never assert identity, roles, or
-  verification results.
-- Errors use one envelope (see §5) with stable machine-readable codes and no PII.
-- Timestamps are ISO-8601 UTC strings.
+Global rules (implemented):
 
-## 1. `GET /health` — Confirmed (implemented)
+- The server decides everything: clients never supply a UID, role, or verification state.
+- No endpoint reveals whether a phone number belongs to an existing account (Phase 2 has no
+  account lookup at all; the creation response is identical for every valid phone).
+- No response contains OTP codes, hashes, pepper data, raw phone numbers, or internal ids
+  beyond the opaque challenge id required for verification.
+- All expiry/attempt decisions use the server clock.
 
-Implemented as the `health` Cloud Function (`functions/src/index.ts`).
+## 1. `GET /health` — Confirmed
 
-Response `200`:
+Implemented as the `health` Cloud Function. Returns non-sensitive service metadata
+(`status`, `service`, `version`, `environment`, `timestamp`). No dependency probing, no
+secrets, no configuration values.
 
-```json
-{
-  "status": "ok",
-  "service": "otp-infrastructure-service",
-  "version": "0.1.0",
-  "environment": "development",
-  "timestamp": "2026-10-17T00:00:00.000Z"
-}
-```
+## 2. `requestOtp` (callable) — Implemented (Phase 2)
 
-Contains no secrets, no configuration values, and no dependency status detail. A deeper
-readiness probe (Firestore/provider health) is Phase 2+ work and must not leak internals.
-
-## 2. `POST /v1/otp/requests` — Proposed (Phase 2)
-
-Create a challenge and enqueue delivery.
-
-Request:
+Input:
 
 ```json
-{ "phone": "+919876543210" }
+{ "phone": "+919876543210", "purpose": "sign-in" }
 ```
 
-`200` response (enumeration-resistant; identical shape whether or not an account exists):
+- `phone`: required; normalized server-side (E.164; Indian local formats accepted).
+- `purpose`: required; one of `sign-in`, `phone-verification` (bound into the challenge and
+  code hash).
+
+Success response:
 
 ```json
-{ "challengeId": "<opaque>", "expiresInSeconds": 300, "resendAfterSeconds": 45 }
+{ "challengeId": "c_<opaque>", "expiresInSeconds": 300, "resendAfterSeconds": 60 }
 ```
 
-Behavior:
+Errors (`error.status` is the callable code; `error.details.code` is the stable code):
 
-- Normalizes to E.164; invalid numbers are rejected with `INVALID_REQUEST` (not
-  enumeration-revealing because it depends only on format).
-- Applies rate limits (per phone hash, requester hash, global). Over limit →
-  `429` + `RATE_LIMITED` with `retryAfterSeconds`.
-- Resend before cooldown → `429` + `RESEND_COOLDOWN` (or silently reuse the live challenge
-  — policy decided in Phase 2; must not reveal account existence).
-- Never returns whether the number belongs to an existing user.
+| Condition                                         | status               | details.code          | Extra               |
+| ------------------------------------------------- | -------------------- | --------------------- | ------------------- |
+| Malformed input / invalid phone / unknown purpose | `invalid-argument`   | `INVALID_REQUEST`     | —                   |
+| Resend before cooldown                            | `resource-exhausted` | `RESEND_COOLDOWN`     | `retryAfterSeconds` |
+| Per-phone / per-requester / global limit          | `resource-exhausted` | `RATE_LIMITED`        | `retryAfterSeconds` |
+| Provider rejected, failed, or crashed             | `unavailable`        | `SERVICE_UNAVAILABLE` | `retryAfterSeconds` |
 
-## 3. `POST /v1/otp/verifications` — Proposed (Phase 2/3)
+Delivery failure semantics: on any non-accepted provider outcome the challenge is voided
+and the phone cooldown is cleared so the client may retry immediately (server-side limits
+still apply). A `pending` challenge never became verifiable because of a failed send.
 
-Verify a code; on success return a Firebase custom token.
+## 3. `verifyOtp` (callable) — Implemented (Phase 2)
 
-Request:
+Input:
 
 ```json
-{ "challengeId": "<opaque>", "code": "123456" }
+{ "challengeId": "c_<opaque>", "code": "123456", "purpose": "sign-in" }
 ```
 
-`200` response:
+Success response:
 
 ```json
-{ "customToken": "<firebase custom token>", "expiresInSeconds": 300 }
+{ "verified": true, "purpose": "sign-in" }
 ```
 
-Failure responses (all with generic user-facing semantics; exact code mapping is Phase 2
-policy):
+`customToken` is intentionally absent — it arrives with Phase 3 after identity resolution
+is implemented and tested.
 
-| Condition                                      | HTTP | Code                                                                   |
-| ---------------------------------------------- | ---- | ---------------------------------------------------------------------- |
-| Malformed request                              | 400  | `INVALID_REQUEST`                                                      |
-| Unknown/expired/consumed challenge, wrong code | 401  | `CODE_INVALID` (deliberately indistinguishable)                        |
-| Attempt limit reached                          | 401  | `CODE_INVALID` (same as above; `TOO_MANY_ATTEMPTS` only in audit logs) |
-| Rate limited                                   | 429  | `RATE_LIMITED`                                                         |
-| Unexpected                                     | 500  | `INTERNAL`                                                             |
+Errors:
 
-Rules:
+| Condition                                                                                           | status               | details.code      | Notes                          |
+| --------------------------------------------------------------------------------------------------- | -------------------- | ----------------- | ------------------------------ |
+| Malformed input (bad id/code format, unknown purpose)                                               | `invalid-argument`   | `INVALID_REQUEST` | —                              |
+| Wrong code, expired, locked, consumed, voided, unknown challenge, purpose mismatch, pepper rotation | `permission-denied`  | `CODE_INVALID`    | Deliberately indistinguishable |
+| Verify rate limit                                                                                   | `resource-exhausted` | `RATE_LIMITED`    | `retryAfterSeconds`            |
 
-- Consumption is atomic; exactly one of N concurrent correct submissions succeeds.
-- Custom tokens are issued only inside the success path after consumption.
-- The endpoint never accepts or returns a UID.
+Rules (implemented and tested):
+
+- Consumption is atomic; of N concurrent correct submissions exactly one succeeds
+  (verified against the Firestore emulator with 10 concurrent requests).
+- Attempt limit is 5 failed verifications per challenge; the correct code is rejected after
+  a lock.
+- Resending voids a previous pending challenge for the same phone (superseded), so only one
+  challenge is live per phone.
+- Replay after success, after expiry, or after voiding is rejected.
 
 ## 4. Relay endpoints — Proposed (Phase 4)
 
-Device-authenticated (enrolled credential; never the same credentials as clients).
-Candidate shape (finalized in Phase 4):
+Unchanged from Phase 1 planning: device-authenticated job claim (one-time lease), result
+reporting (idempotent), heartbeat. To be finalized with the relay implementation.
 
-- `POST /v1/relay/jobs/claim` — claims at most one pending job; returns job id, destination,
-  body, expiry, lease. Idempotent per device within the lease window.
-- `POST /v1/relay/jobs/{jobId}/result` — reports `sent` or `failed` with reason code;
-  idempotent; rejected after lease expiry; never echoes OTP content back.
-- `POST /v1/relay/heartbeat` — health/last-seen, app version, SIM label.
+## 5. Error code taxonomy (implemented subset)
 
-Evidence levels recorded: relay accepted → Android submitted → carrier accepted → confirmed
-delivery (relay can evidence at most Android submission).
+| Code                  | Meaning                                                                                      |
+| --------------------- | -------------------------------------------------------------------------------------------- |
+| `INVALID_REQUEST`     | Malformed or unsupported input                                                               |
+| `CODE_INVALID`        | Generic verification failure (wrong/expired/consumed/locked/voided/unknown/purpose mismatch) |
+| `RATE_LIMITED`        | Throttled; `retryAfterSeconds` present                                                       |
+| `RESEND_COOLDOWN`     | Resend requested before the cooldown elapsed                                                 |
+| `SERVICE_UNAVAILABLE` | Delivery provider rejected/failed/crashed; challenge voided; safe to retry                   |
+| `INTERNAL`            | Unhandled server error (callable default); no details leaked                                 |
 
-## 5. Error envelope — Proposed
+Reserved for later phases: `CHALLENGE_EXPIRED`, `TOO_MANY_ATTEMPTS` (audit-only today; the
+public response stays generic).
 
-```json
-{ "error": { "code": "RATE_LIMITED", "message": "Too many requests", "retryAfterSeconds": 30 } }
-```
+## 6. Abuse controls visible to clients (implemented)
 
-| Code                | Meaning                                                                         |
-| ------------------- | ------------------------------------------------------------------------------- |
-| `INVALID_REQUEST`   | Malformed/unsupported input                                                     |
-| `CODE_INVALID`      | Generic verification failure (wrong/expired/consumed/locked)                    |
-| `RATE_LIMITED`      | Throttled; see `retryAfterSeconds`                                              |
-| `RESEND_COOLDOWN`   | Resend requested too soon                                                       |
-| `CHALLENGE_EXPIRED` | Reserved for cases where revealing expiry is safe; not used publicly by default |
-| `TOO_MANY_ATTEMPTS` | Reserved for internal/audit use; public responses stay generic                  |
-| `INTERNAL`          | Unexpected server error; no details leaked                                      |
+- Per phone: 3 requests / 15 min, 60 s resend cooldown.
+- Per requester (hashed IP + User-Agent): 10 requests / 10 min, 20 verifies / 10 min.
+- Global: 60 requests / minute.
+- See D-021 for the documented limitations of IP-based controls in callable functions and
+  behind proxies.
 
-## 6. Cross-cutting semantics — Proposed
+## 7. Cross-cutting semantics
 
-- **Idempotency:** challenge creation may accept an idempotency key in Phase 2 if double
-  submissions from flaky clients become measurable; relay results are idempotent by design.
-- **No client-supplied identity:** no endpoint accepts `uid`, `role`, or `verified` fields.
-- **Time:** all expiry decisions use the server clock; clients are never trusted for time.
-- **Logging:** requests/responses are logged with correlation ids only; codes, tokens, and
-  raw phone numbers are never logged.
-- **CORS/auth:** browser-origin access is not a target; the API is consumed by the app
-  (and later CoolBus). App Check evaluation is an open decision (D-013/D-018 reserved).
+- Idempotency: no automatic retries; a failed request never silently sends a second SMS.
+- Logging: structured events (`otp.request.created`, `otp.verification.failed`, …) contain
+  challenge/job ids only — no codes, no phone numbers — verified by tests.
+- CORS/auth: App Check adoption remains an open decision (D-018).

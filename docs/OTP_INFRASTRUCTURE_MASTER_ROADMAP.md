@@ -3,7 +3,7 @@
 **Document status:** Living specification. This is the primary source of truth for project
 scope, architecture, and phase progress.
 **Last updated:** 2026-10-17
-**Current phase:** Phase 1 — READY FOR REVIEW (all other phases NOT STARTED)
+**Current phase:** Phase 2 — READY FOR REVIEW (Phase 1 APPROVED; Phases 3–7 NOT STARTED)
 
 > This document describes the **planned** architecture. Except where explicitly marked
 > **Confirmed**, nothing in this document is implemented. The repository currently contains
@@ -174,22 +174,32 @@ explicit test evidence before any phase can pass.
 
 ## 6. Proposed repository and module structure
 
-**Confirmed** current layout (Phase 1):
+**Confirmed** current layout (Phase 1 + Phase 2):
 
 ```
 otp-infrastructure-service/
 ├── functions/                     # @otp-infra/functions (Cloud Functions v2)
 │   └── src/
-│       ├── index.ts               # exported `health` function
+│       ├── index.ts               # composition root: health, requestOtp, verifyOtp
 │       ├── health.ts              # pure payload + express handler
-│       └── delivery/mock-provider.ts
+│       ├── api/                   # callable handlers + requester-context hashing
+│       ├── audit/                 # audit events + best-effort Firestore sink
+│       ├── config/                # fail-fast environment configuration
+│       ├── delivery/              # contract mock provider, dispatcher, factory
+│       ├── otp/                   # policy, phone, random, hashing, state, engine, types
+│       └── storage/               # transaction abstraction + Firestore adapter
 ├── packages/contracts/            # @otp-infra/contracts (types only)
 │   └── src/{index,delivery}.ts
-├── tests/unit/                    # Phase 1 tests
-├── docs/                          # roadmap + four living design docs + decision log
+├── tests/
+│   ├── unit/                      # engine, handlers, crypto, policy, static scans
+│   ├── integration/               # Firestore emulator engine tests
+│   ├── security/                  # Firestore rules denial tests
+│   └── helpers/                   # in-memory DB (optimistic concurrency), clock, fakes
+├── docs/                          # roadmap + living design docs + decision log
+├── firestore.rules                # deny-all client rules (tested in the emulator)
 ├── .github/workflows/ci.yml
 ├── firebase.json                  # emulator config, demo- project usage
-├── eslint.config.mjs, .prettierrc.json, vitest.config.ts, tsconfig.base.json
+├── eslint.config.mjs, .prettierrc.json, vitest.config.mts, vitest.integration.mts
 ├── .env.example, .gitignore, README.md, CHANGELOG.md
 ```
 
@@ -213,33 +223,42 @@ commit that gives it working code.
 
 ## 7. OTP challenge lifecycle and state transitions
 
-**Proposed** lifecycle (policy values are defaults pending Phase 2 security review):
+**Confirmed** (Phase 2, implemented and tested; see Appendix B):
 
-- OTP: 6 numeric digits, generated with a CSPRNG, never logged, never stored in plaintext.
-  Stored as a keyed hash (HMAC-SHA256 with a secret pepper + per-challenge salt); pepper
-  versioned to allow rotation. **Unverified** until Phase 2 implementation and tests.
-- Challenge TTL: 5 minutes (default). Resend cooldown: 30–60 seconds (to be tuned).
-  Max verification attempts per challenge: 5 (to be tuned). All server-enforced.
-- Challenge states:
+- OTP: 6 numeric digits, CSPRNG-generated (`crypto.randomInt`; the JavaScript PRNG is
+  banned by lint and a static test), never logged, never stored in plaintext. Stored as a
+  keyed HMAC-SHA256 (`"code:v1:" + salt + ":" + purpose + ":" + code`, pepper from
+  configuration) with a per-challenge salt; pepper version recorded per challenge so
+  rotation invalidates live challenges detectably (max 5-minute impact).
+- Challenge TTL: 5 minutes. Resend cooldown: 60 seconds. Max verification attempts: 5.
+  Per-phone limit 3 requests/15 min; per-requester 10 requests/10 min and 20
+  verifications/10 min; global 60 requests/min. All server-enforced in Firestore
+  transactions; blocked requests consume no quota.
+- Challenge states (implemented):
 
 ```mermaid
 stateDiagram-v2
   [*] --> pending: challenge created + delivery job enqueued
   pending --> consumed: correct code, atomically marked used
-  pending --> expired: TTL reached
+  pending --> expired: TTL reached (checked by engine clock)
   pending --> locked: attempt limit reached
+  pending --> void: superseded by resend / delivery rejected or failed
   consumed --> [*]
   expired --> [*]
   locked --> [*]
+  void --> [*]
 ```
 
-- Transitions are performed with Firestore transactions (`consumed`, attempt increments)
-  so concurrent verification requests cannot both succeed. **Unverified** until Phase 2
-  concurrency tests exist.
-- Delivery outcome is tracked on the delivery job, not on the challenge; a failed or absent
-  delivery never makes a challenge verifiable.
-- Expiry is enforced by the backend clock at verification time; Firestore TTL policies are
-  only a storage-retention mechanism, not a security control. **Proposed**
+- Transitions are performed in Firestore transactions (`consumed`, attempt increments,
+  voiding) so concurrent verification requests cannot both succeed. **Confirmed** by
+  emulator tests: 10 concurrent correct submissions produce exactly one success.
+- Attempts are only consumed by wrong codes; rate-limited verifications do not burn
+  attempts but also never verify.
+- Delivery outcome is tracked on the delivery job, not the challenge; a non-accepted
+  delivery voids the challenge and clears the cooldown so the client can retry explicitly
+  (no automatic SMS retry in Phase 2).
+- Expiry is enforced by the backend clock at verification time (`Date.parse(expiresAt) <=
+now`); Firestore TTL policies remain a future storage-retention mechanism only (D-023).
 
 ---
 
@@ -314,20 +333,25 @@ stateDiagram-v2
 
 ## 11. Data model and proposed collections
 
-Summary (**Proposed**; full field-level detail in `docs/DATA_MODEL.md`):
+Summary — implemented in Phase 2 for the first five rows (full field-level detail in
+`docs/DATA_MODEL.md`):
 
-| Collection         | Purpose                               | Notes                                                                               |
-| ------------------ | ------------------------------------- | ----------------------------------------------------------------------------------- |
-| `otp_challenges`   | One document per challenge            | Hashed code (pepper + salt), attempts, expiry, state, delivery job ref; TTL cleanup |
-| `delivery_jobs`    | One document per delivery attempt     | Provider id, state, claim lease, dedupe key, last error                             |
-| `delivery_devices` | Relay enrollment and health           | Hashed credential, status (active/revoked), last seen                               |
-| `identity_links`   | phone-hash → Firebase UID mapping     | Backend-only; never exposed to clients                                              |
-| `rate_limits`      | Counter windows for requests/verifies | Atomic increments; short TTL                                                        |
-| `audit_events`     | Privacy-preserving security events    | No plaintext phone numbers or codes                                                 |
+| Collection         | Purpose                              | Status                                                               |
+| ------------------ | ------------------------------------ | -------------------------------------------------------------------- |
+| `otp_challenges`   | One document per challenge           | **Implemented**: hashed code, attempts, expiry, state, job ref       |
+| `otp_phone_state`  | Per-phone cooldown/limits/active ref | **Implemented**: resend cooldown + per-phone request window          |
+| `requester_state`  | Per-requester request/verify windows | **Implemented**: fixed windows keyed by hashed client context        |
+| `rate_limits`      | Global request bucket per minute     | **Implemented** (`req-global-<windowStartMs>` documents)             |
+| `delivery_jobs`    | One document per delivery attempt    | **Implemented**; body/destination deliberately not persisted (D-019) |
+| `audit_events`     | Privacy-preserving security events   | **Implemented**: no plaintext phones, codes, or tokens               |
+| `delivery_devices` | Relay enrollment and health          | Phase 4 (not created)                                                |
+| `identity_links`   | phone-hash → Firebase UID mapping    | Phase 3 (not created; strategy deliberately undecided — D-024)       |
 
-**Proposed** rules: clients have **no** read/write access to any of these collections
-(Firestore rules deny by default; only Admin SDK access). No plaintext OTPs anywhere. Phone
-numbers stored only as keyed hashes. Retention windows documented and enforced.
+**Confirmed** rules: clients have **no** read/write access to any collection (Firestore
+rules deny everyone; emulator tests cover unauthenticated and authenticated contexts). No
+plaintext OTPs or phone numbers anywhere at rest; enabled by design because job documents do
+not persist message content. Retention mirrors (`ttlAtMs`/`ttlAt`) are written for every
+document; TTL policy configuration is deferred (D-023).
 
 ---
 
@@ -487,7 +511,7 @@ Evidence required: official documentation links, provider statements, and — wh
 
 ### 20.1 Phase 1 — Independent Repository and Architecture Foundation
 
-**Status: READY FOR REVIEW** (this repository as of 2026-10-17)
+**Status: APPROVED** (owner approval received 2026-10-17; verification record in Appendix A)
 
 - **Objective:** establish separate repository, structure, stack, conventions, docs, and a
   minimal runnable skeleton with tests and a mock delivery contract.
@@ -517,25 +541,42 @@ Evidence required: official documentation links, provider statements, and — wh
 
 ### 20.2 Phase 2 — Secure OTP Engine and Backend Foundation
 
-**Status: NOT STARTED** — requires Phase 1 approval
+**Status: READY FOR REVIEW** (implementation complete 2026-10-17; evidence in Appendix B)
 
 - **Objective:** trusted OTP engine in isolated dev/test environment with mock provider.
+  **Achieved** without touching identity, tokens, or real delivery.
 - **Scope:** generation (CSPRNG), normalization, challenge creation/expiry/storage, attempt
   counters, resend policy, atomic consumption, replay/concurrency protection, rate
   limiting, enumeration-resistant responses, audit events, error handling, tests.
-- **Dependencies:** Phase 1 approved; Firestore emulator; policy parameter review.
-- **Files/modules:** `functions/src/otp/`, `rate-limiting/`, `audit/`, `packages/test-utils/`,
-  `tests/{integration,security}/`, Firestore rules file.
-- **Security considerations:** all of section 13; no plaintext OTPs; pepper via config
-  (Secret Manager in later envs); rules denying client access.
-- **Required tests:** expiry, wrong code, replay, concurrent verification, resend limits,
-  request flooding/rate limits, normalization cases, enumeration responses, rules denial.
-- **Acceptance criteria:** the Phase 2 acceptance gate from the owner brief — security and
-  abuse-prevention tests pass; no production wiring; no real users.
-- **Deliverables:** engine code + tests + updated docs (data model finalized, API contract
-  finalized to implemented status, decisions recorded).
-- **Risks:** Firestore transaction contention; clock/expiry edge cases; policy tuning
-  without real traffic data.
+- **Dependencies:** Phase 1 approved (received); Firestore emulator (used); policy values
+  reviewed and documented (D-012).
+- **Files/modules (actual):** `functions/src/otp/` (policy, phone, random, hashing, state,
+  types, engine), `functions/src/storage/` (transaction abstraction + Firestore adapter),
+  `functions/src/rate-limiting/` logic embedded in `otp/state.ts` + engine transactions
+  (no separate module was justified), `functions/src/audit/`, `functions/src/delivery/`
+  (dispatcher + provider factory), `functions/src/api/` (callable handlers), `firestore.rules`,
+  `tests/{unit,integration,security}/`, `tests/helpers/` (in-memory database with optimistic
+  concurrency, fixed clock, recording logger/audit). The planned `packages/test-utils/`
+  package was **not** created: all fakes live in `tests/helpers/` because only this
+  repository consumes them (revisit in Phase 4 if the relay needs them).
+- **Security considerations:** all of section 13 for the OTP engine; no plaintext OTPs or
+  phone numbers at rest; pepper from environment with fail-fast validation (D-020); rules
+  denying client access (tested); no client-supplied identity anywhere.
+- **Required tests (all executed, see Appendix B):** successful verification, incorrect
+  codes, expiry (including exact-boundary), attempt exhaustion and lock, resend cooldowns,
+  per-phone/per-requester/global request limits, verify rate limits, delivery failures
+  (rejected/failed/crash), replay, concurrent verification (in-memory and Firestore
+  emulator), concurrent duplicate requests, challenge purpose binding, phone/code binding,
+  secrets/OTPs kept out of logs and audit, mock provider production guard, prohibited-API
+  static scan, Firestore rules denial.
+- **Acceptance criteria:** Phase 2 acceptance gate from the owner brief — security and
+  abuse-prevention tests pass; no production wiring; no real users. **Met** (tests executed
+  with recorded results; identity/token work explicitly absent).
+- **Deliverables:** engine + storage + audit + dispatcher + callable API + tests + rules;
+  docs updated to implemented status (data model, API contract, threat model, decisions).
+- **Risks:** Firestore transaction contention — mitigated with 20-attempt retry budget and
+  validated by emulator concurrency tests; IP-based limits remain proxy-dependent (D-021);
+  policy tuning awaits real traffic (Phase 5).
 - **Approval gate:** security test evidence reviewed before Phase 3.
 
 ### 20.3 Phase 3 — Firebase Identity and Custom-Token Integration
@@ -700,16 +741,25 @@ Evidence required: official documentation links, provider statements, and — wh
 ## 22. Decision log
 
 The full record (context, alternatives, rationale, consequences, status, dates) lives in
-`docs/DECISIONS.md`. Current entries: D-001 separate repository; D-002 TypeScript +
-Cloud Functions v2; D-003 TypeScript 5.9 pin; D-004 CommonJS output; D-005 npm workspaces
+`docs/DECISIONS.md`. Current entries:
 
-- contracts package; D-006 mock provider + production guard; D-007 Node 22 target /
-  Node 24 local; D-008 relay repository split (open); D-009 deployment packaging for
-  workspaces (open); D-010 region `asia-south1` (proposed); D-011 Firestore as challenge
-  store (proposed); D-012 OTP policy defaults (proposed); D-013 identity/custom-token
-  strategy (open); D-014 environment/project separation (constraint); D-015 secret
-  management (proposed); D-016 CoolBus rollout mechanism (proposed, approval required);
-  D-017 CI provider and remote publishing (approval required to publish).
+- D-001 separate repository; D-002 TypeScript + Cloud Functions v2; D-003 TypeScript 5.9
+  pin; D-004 CommonJS output; D-005 npm workspaces + contracts package; D-006 mock provider
+  - production guard; D-007 Node 22 target / Node 24 local.
+- D-008 relay repository split (open); D-009 deployment packaging for workspaces (open);
+  D-010 region `asia-south1` (proposed).
+- D-011 Firestore challenge store — **implemented in Phase 2** with a transaction
+  abstraction and optimistic-concurrency tests; D-012 OTP policy values — **implemented in
+  Phase 2**.
+- D-013 identity/custom-token strategy (open, Phase 3); D-014 environment/project
+  separation (constraint); D-015 secret management (proposed); D-016 CoolBus rollout
+  mechanism (proposed, approval required); D-017 CI provider and remote publishing
+  (approval required to publish).
+- D-018 App Check adoption (open); D-019 no message/destination persistence in delivery
+  jobs (Phase 2; revisit in Phase 4); D-020 pepper via environment now / Secret Manager
+  later; D-021 callable functions and IP-control limitations; D-022 error mapping via
+  HttpsError + stable `details.code`; D-023 TTL policy deferred to operations; D-024
+  identity strategy deliberately undecided in Phase 2.
 
 ---
 
@@ -739,3 +789,56 @@ Honest observations:
 - No Firebase production access, no custom tokens, no SMS sent, no deployment performed.
   Network use was limited to npm registry installs and emulator-local HTTP.
 - No secrets are present in the repository; `.env.example` contains placeholders only.
+
+---
+
+## Appendix B — Phase 2 verification record
+
+Executed 2026-10-17 on the development machine (Windows; Node v24.19.0; npm 12.0.2;
+firebase-tools 15.34.0 via `npx`; Temurin JDK 25 for the Firestore emulator).
+
+| Check                     | Command                                                                  | Result                                                                                                                                            |
+| ------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Format                    | `npm run format:check`                                                   | Passed — all matched files use Prettier style                                                                                                     |
+| Lint                      | `npm run lint`                                                           | Passed — no ESLint findings (includes CSPRNG/non-keyed-hash bans for `functions/src`)                                                             |
+| Typecheck                 | `npm run typecheck`                                                      | Passed — strict TS across contracts + functions                                                                                                   |
+| Build                     | `npm run build`                                                          | Passed                                                                                                                                            |
+| Unit tests                | `npm test`                                                               | Passed — 10 files, **85 tests** (2 integration/security files skipped without emulator)                                                           |
+| Integration + rules tests | `npm run test:integration`                                               | Passed — 2 files, **18 tests** against the Firestore emulator (demo offline project)                                                              |
+| Static security scans     | included in unit suite                                                   | No `Math.random`, no non-keyed `createHash(` in production source; mock provider guard intact                                                     |
+| Emulator callable smoke   | `firebase emulators:exec --only functions,firestore` + curl `requestOtp` | Passed — `{"result":{"challengeId":"...","expiresInSeconds":300,"resendAfterSeconds":60}}`; structured log `otp.request.created` contained no PII |
+
+Test highlights (all executed, not inferred):
+
+- Concurrent verification: 10 parallel correct submissions → exactly 1 success (in-memory
+  optimistic concurrency AND real Firestore emulator).
+- Concurrent duplicate requests: 5 parallel same-phone requests → exactly 1 challenge.
+- Lifecycle: wrong code increments attempts; 5th failure locks; correct code rejected after
+  lock; exact-expiry-boundary rejection; replay after consumptions rejected; resend voids the
+  previous pending challenge; replay after void rejected.
+- Abuse limits: per-phone (3/15 min), per-requester (10 requests, 20 verifies / 10 min),
+  global (60/min; test override 2/min) — all enforced; blocked requests consume no quota.
+- Delivery: provider rejected/failed/crashed → challenge voided, cooldown cleared, API maps
+  to `SERVICE_UNAVAILABLE`; no automatic resend.
+- Privacy: no test found any OTP code or phone digits in persisted documents, logs, or audit
+  events; `otp_challenges.codeHash` is 64-hex HMAC; rules deny all client access.
+
+Honest observations and limitations:
+
+- One transient failure was observed once: with `--only functions,firestore` on a cold
+  start, function discovery timed out after 10 s; the immediate rerun succeeded and the
+  `--only functions` run always succeeded. Treated as an emulator cold-start quirk; the
+  `test:integration` workflow (Firestore only + direct engine tests) is unaffected.
+- First emulator callable invocation took ~3.9 s (Admin SDK init + metadata lookup timeouts
+  in the offline emulator); subsequent handling is fast. Not representative of production.
+- Firestore TTL policies on `ttlAt` are **not** configured yet (ops task, D-023); cleanup
+  correctness does not depend on them.
+- IP-based limits depend on `rawRequest.ip`, which is proxy-dependent (D-021); phone-number
+  and global limits carry the primary abuse-prevention weight.
+- Timing uniformity for enumeration resistance is best-effort and not measured (residual
+  risk, threat model T17).
+- No Firebase identities, custom tokens, real SMS, relay code, or production systems were
+  involved. Network use was limited to npm registry installs and local emulators.
+- GitHub Actions CI integration step for the emulator suite was added to the workflow file
+  but **has not been executed on GitHub** (no remote repository; publishing requires owner
+  approval D-017). Locally, the equivalent commands pass.

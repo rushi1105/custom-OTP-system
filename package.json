@@ -20,13 +20,16 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "firebase emulators:exec --only firestore --project demo-otp-infrastructure-service \"vitest run --config vitest.integration.mts\"",
     "emulators": "firebase emulators:start --project demo-otp-infrastructure-service",
     "clean": "npm run clean --workspaces --if-present"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@firebase/rules-unit-testing": "^6.0.0",
     "@types/node": "^24.19.2",
     "eslint": "^10.13.0",
+    "firebase": "^13.0.0",
     "firebase-tools": "^15.34.0",
     "prettier": "^3.9.10",
     "typescript": "^5.9.3",

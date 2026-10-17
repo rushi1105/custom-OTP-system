@@ -78,6 +78,33 @@ describe('MockDeliveryProvider', () => {
     expect(provider.recordedMessages).toHaveLength(0);
   });
 
+  it('reports configured rejections as rejected without recording the message', async () => {
+    const provider = new MockDeliveryProvider({
+      clock: () => FIXED_NOW,
+      rejectWith: {
+        code: 'DESTINATION_REJECTED',
+        message: 'simulated rejection',
+        retryable: false,
+      },
+    });
+
+    const receipt = await provider.send(makeRequest());
+
+    expect(receipt.status).toBe('rejected');
+    expect(receipt.error).toMatchObject({ code: 'DESTINATION_REJECTED', retryable: false });
+    expect(provider.recordedMessages).toHaveLength(0);
+  });
+
+  it('propagates configured thrown errors to simulate provider crashes', async () => {
+    const provider = new MockDeliveryProvider({
+      clock: () => FIXED_NOW,
+      throwWith: new Error('simulated crash'),
+    });
+
+    await expect(provider.send(makeRequest())).rejects.toThrow('simulated crash');
+    expect(provider.recordedMessages).toHaveLength(0);
+  });
+
   it('does not claim confirmed handset delivery', () => {
     expect(makeProvider().capabilities.confirmedDelivery).toBe(false);
   });

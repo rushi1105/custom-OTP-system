@@ -12,6 +12,8 @@ const E164_PATTERN = /^\+[1-9]\d{6,14}$/;
 export interface MockDeliveryProviderOptions {
   clock?: () => Date;
   failWith?: DeliveryError;
+  rejectWith?: DeliveryError;
+  throwWith?: Error;
 }
 
 export class MockDeliveryProvider implements DeliveryProvider {
@@ -20,6 +22,8 @@ export class MockDeliveryProvider implements DeliveryProvider {
 
   private readonly clock: () => Date;
   private readonly failWith?: DeliveryError;
+  private readonly rejectWith?: DeliveryError;
+  private readonly throwWith?: Error;
   private readonly recorded: DeliveryRequest[] = [];
   private sequence = 0;
 
@@ -29,6 +33,8 @@ export class MockDeliveryProvider implements DeliveryProvider {
     }
     this.clock = options.clock ?? (() => new Date());
     this.failWith = options.failWith;
+    this.rejectWith = options.rejectWith;
+    this.throwWith = options.throwWith;
   }
 
   get recordedMessages(): readonly DeliveryRequest[] {
@@ -40,6 +46,12 @@ export class MockDeliveryProvider implements DeliveryProvider {
     const validationError = validateRequest(request, now);
     if (validationError) {
       return this.buildReceipt(request, 'rejected', validationError);
+    }
+    if (this.throwWith) {
+      throw this.throwWith;
+    }
+    if (this.rejectWith) {
+      return this.buildReceipt(request, 'rejected', this.rejectWith);
     }
     if (this.failWith) {
       return this.buildReceipt(request, 'failed', this.failWith);

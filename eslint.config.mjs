@@ -21,4 +21,24 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
+  {
+    files: ['functions/src/**/*.ts'],
+    rules: {
+      'no-restricted-properties': [
+        'error',
+        {
+          object: 'Math',
+          property: 'random',
+          message: 'Use the CSPRNG helpers in functions/src/otp/random.ts',
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "CallExpression[callee.name='createHash']",
+          message: 'Use keyed HMAC via functions/src/otp/hashing.ts instead of non-keyed hashing',
+        },
+      ],
+    },
+  },
 );
