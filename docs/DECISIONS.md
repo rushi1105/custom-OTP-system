@@ -123,6 +123,9 @@ Status values: `Proposed` · `Accepted` · `Rejected` · `Superseded` · `Open`.
 - **Consequences:** Must be resolved and tested in the emulator before any real deployment;
   candidate: predeploy esbuild bundle.
 - **Status:** Open — blocks real deployment (Phase 3 at the earliest; Phase 7 latest).
+  Phase 3 planning assessment and evidence: `docs/PHASE3_PLAN.md` §5 (recommended direction:
+  esbuild predeploy bundle; local simulation showed the isolated tree yields a dangling
+  workspace junction, not a hard failure).
 
 ## D-010 — Deploy region `asia-south1`
 
@@ -177,7 +180,8 @@ Status values: `Proposed` · `Accepted` · `Rejected` · `Superseded` · `Open`.
 - **Consequences:** Requires a dedicated test Firebase project (Phase 3, approval required)
   and explicit tests for phone attachment, session restoration, and missing profiles.
   App Check adoption for API endpoints remains an open sub-question.
-- **Status:** Open — finalized with test evidence in Phase 3.
+- **Status:** Open — finalized with test evidence in Phase 3. Phase 3 design approved
+  (D-031); implementation begins at subphase 3.1 (fakes only): `docs/IDENTITY_DESIGN.md`.
 
 ## D-014 — Environment and project separation
 
@@ -240,7 +244,12 @@ Status values: `Proposed` · `Accepted` · `Rejected` · `Superseded` · `Open`.
   of Phase 3 client sign-in testing, either (a) adopt App Check (with a documented
   emulator/local story) or (b) formally accept unauthenticated callable access with
   compensating controls (phone/global caps, alerting) recorded in the threat model.
-- **Status:** Open — decision required before Phase 3 concludes.
+- **Status:** Open — decision required before Phase 3 concludes. Owner direction (D-030):
+  App Check recommended; unauthenticated callable access stays confined to the isolated
+  test setup until an explicit policy is approved. Phase 3 planning proposal (pending owner
+  approval): `docs/PHASE3_PLAN.md` §2 — unauthenticated callables remain test-only; App
+  Check enforcement (or recorded acceptance with compensating controls) required before
+  real users.
 
 ## D-019 — Delivery job documents do not persist message body or destination
 
@@ -268,6 +277,9 @@ Status values: `Proposed` · `Accepted` · `Rejected` · `Superseded` · `Open`.
 - **Consequences:** Before any real deployment (Phase 7, at the latest), the pepper must
   move to Secret Manager; rotation invalidates live challenges by design
   (`pepper_version_mismatch` is tested) and requires a documented runbook.
+  Phase 3 proposal (pending approval): `docs/PHASE3_PLAN.md` §4 — Secret Manager via
+  `defineSecret` for the isolated test project; identity resolution is pepper-rotation safe
+  because Firebase Auth is the authoritative lookup (`docs/IDENTITY_DESIGN.md`).
 - **Status:** Accepted for Phase 2; Secret Manager binding is a Phase 7 prerequisite.
 
 ## D-021 — Callable functions and IP-based control limitations
@@ -412,4 +424,101 @@ Status values: `Proposed` · `Accepted` · `Rejected` · `Superseded` · `Open`.
 - **Consequences / acceptance criteria:** before Phase 3 client work exposes purposes,
   record in D-013 what each purpose authorizes (identity resolution behavior, token
   issuance, account creation) with tests. Until then, clients should use `sign-in` only.
-- **Status:** Open — required decision in Phase 3.
+  Phase 3 proposal (pending approval): `docs/PHASE3_PLAN.md` §3 — restrict the API boundary
+  to `sign-in`; keep `phone-verification` reserved for a future authenticated linking flow.
+- **Status:** Open — required decision in Phase 3. Owner direction #5 (D-030, 2026-10-17)
+  approves restricting Phase 3 to `sign-in` and rejecting other purposes at the API
+  boundary; the handler allowlist is scheduled for subphase 3.4.
+
+## D-029 — Phase 3 planning artifacts (proposals pending owner approval)
+
+- **Date:** 2026-10-17
+- **Context:** The owner authorized Phase 3 planning and emulator-first preparation only,
+  with implementation gated on explicit decisions.
+- **Artifacts:**
+  - `docs/IDENTITY_DESIGN.md` — proposed identity resolution, creation/claim protocol,
+    phone attachment/conflict rules, verification-to-token lifecycle, trusted-attribute
+    model, and open decisions **ID-1…ID-8**.
+  - `docs/PHASE3_PLAN.md` — D-018 callable-protection policy proposal, D-028 purpose
+    semantics proposal, D-020 pepper provisioning proposal, D-009 packaging assessment
+    (evidence-based), subphase plan 3.0–3.7, required-test coverage map, and approval
+    checklist.
+- **Rationale:** Phase 3 touches identity and token issuance; the adversarial-review
+  discipline requires decisions to be written down and approved before code. Nothing in the
+  artifacts changes current behavior or resolves D-013/D-018/D-020/D-028 by itself.
+- **Consequences:** No identity or token code may be implemented until the owner approves the
+  checklist in `docs/PHASE3_PLAN.md` §10. Approval will convert the relevant entries into
+  final decisions (new or amended D-013/D-018/D-020/D-028 records).
+- **Status:** Accepted as drafts by the owner (2026-10-17, D-030). Commit of the planning
+  change set and implementation (subphase 3.1) occur only after the four pending matrix
+  items (ID-5, ID-7, ID-8, ID-9) are confirmed.
+
+## D-030 — Owner-approved Phase 3 direction (2026-10-17)
+
+- **Date:** 2026-10-17
+- **Context:** Owner decision gate on the Phase 3 planning artifacts (D-029); the artifacts
+  were accepted as drafts and specific direction was approved for planning.
+- **Approved direction (verbatim scope):**
+  1. Firebase Auth remains the authoritative identity source.
+  2. `identity_links` is a backend-owned cache/claim/recovery record, never independent
+     authority over Firebase identity.
+  3. New-user creation only after successful OTP verification and authoritative resolution
+     establishes that no existing identity owns the verified phone number.
+  4. Set the verified phone number on a newly created Auth user, subject to the final
+     identity design and supported Auth-emulator behavior.
+  5. Phase 3 is restricted to the `sign-in` purpose; no phone linking or additional
+     purposes are exposed.
+  6. Single-use OTP semantics retained; the consume-first trade-off and fresh-OTP recovery
+     are documented; no exactly-once token delivery is promised.
+  7. `customToken` is added to the successful `verifyOtp` response only after identity
+     resolution succeeds; tokens are never persisted or logged.
+  8. Role assignment, operator association, profile authorization, and access control stay
+     separate from OTP verification.
+  9. All implementation stays emulator-first: no real SMS, production credentials,
+     real-project deployment, or CoolBus changes.
+- **Also approved for planning:** D-018 recommendation (App Check; unauthenticated
+  callables confined to the isolated test setup until an explicit policy is approved),
+  D-020 documentation-only provisioning proposal (no secrets provisioned), D-009 kept
+  blocked for real deployment, D-028 restricted to `sign-in`, F1–F3 fixes preserved, F4
+  explicit `OTP_ENVIRONMENT` requirement retained.
+- **Pending owner confirmation before implementation:** ID-5 exact response/error contract,
+  ID-7 audit field list, ID-8 recycled-number policy choice, ID-9 `verifyOtp` phone-binding
+  input; D-018 final policy before Phase 3 concludes.
+- **Status:** Recorded (owner direction). Commit of the planning change set occurs only
+  after the pending matrix items are confirmed.
+
+## D-031 — Final Phase 3 identity decisions (ID-5, ID-7, ID-8, ID-9)
+
+- **Date:** 2026-10-17
+- **Context:** Owner decision gate resolving the four pending items in
+  `docs/IDENTITY_DESIGN.md` §10; Phase 3.1 authorized on completion.
+- **ID-5 (approved):** successful `verifyOtp` response is exactly
+  `{ verified: true, purpose: "sign-in", customToken }`; no token TTL field.
+  Post-verification identity/token failures map to the generic `IDENTITY_UNAVAILABLE`
+  external error; no account-existence, link-state, or internal-detail disclosure.
+  Internal observability stays sanitized; custom tokens are never logged, persisted,
+  audited, or included in error messages.
+- **ID-7 (approved with safeguards):** audit envelope plus `phoneHash` and UID only where
+  relevant to the event; no raw phone numbers, OTP codes, custom tokens, or client-supplied
+  identity claims; backend-admin-only access; 90-day retention proposed with actual
+  enforcement required before real deployment; `phoneHash` is correlation-only and must
+  never authorize identity resolution or access; omit UID/`phoneHash` where unnecessary.
+- **ID-8 (approved for controlled pilot only):** policy A — accept and monitor. Possession
+  of a currently verified phone number does not establish continuity of account ownership.
+  This does not authorize an unrestricted real-user launch: account recovery, number
+  reassignment, and account revocation policy must be revisited before real-user rollout;
+  no new recovery behavior without a separate decision.
+- **ID-9 (approved with conditions):** `verifyOtp` requires `phone`; normalize with the
+  canonical E.164 policy; hash with the same configured, versioned pepper as creation;
+  compare inside the same transaction that consumes the challenge. Mismatch ⇒ generic
+  `CODE_INVALID`, challenge unconsumed, no attempt increment, no disclosure. Only the
+  challenge-bound phone may feed Firebase identity resolution; the supplied phone must
+  never select a UID or override an authoritative mapping. Required regression tests:
+  wrong-phone substitution, normalized-equivalent representations, transaction races,
+  unchanged state on mismatch.
+- **Consequences:** Implementation proceeds subphase by subphase from 3.1 (fakes only) with
+  reports and stops at each gate. D-018 final policy remains due before Phase 3 concludes;
+  D-009 stays blocked; R1–R5 remain open; ID-2 remains conditional on Auth-emulator
+  validation (3.5).
+- **Status:** Accepted (owner decisions, 2026-10-17); supersedes the pending items in
+  D-029/D-030.

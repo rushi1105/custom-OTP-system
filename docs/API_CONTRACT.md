@@ -29,6 +29,11 @@ secrets, no configuration values.
 `unconfigured` when a deployed runtime is missing explicit configuration (D-025). It never
 throws; health stays available during misconfiguration.
 
+**Health is a liveness check only.** It does not prove that the OTP configuration is ready
+(pepper, delivery provider, database availability are not probed). OTP endpoints fail closed
+on invalid configuration regardless of the health response; use the `environment` label and
+deployment logs as operational signals, and treat a deeper readiness probe as future work.
+
 ## 2. `requestOtp` (callable) — Implemented (Phase 2)
 
 Input:

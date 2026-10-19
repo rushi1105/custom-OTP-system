@@ -100,12 +100,12 @@ categories with abuse/fraud cases specific to OTP systems (brute force, SMS pump
 
 ## 7. Residual risk register
 
-- Emulator/demo behavior may differ from real Firebase/Auth behavior (R8 in roadmap).
+- Emulator/demo behavior may differ from real Firebase/Auth behavior (PR-8 in roadmap).
 - SMS as a channel is inherently interceptable at the network layer (accepted, documented).
 - Timing uniformity (T17) is best-effort until measured (Phase 5).
-- IP-based requester limits rely on `rawRequest.ip`, which is proxy-dependent in callable
-  functions; documented in D-021. Phone-number and global limits carry the primary
-  abuse-prevention weight.
+- **Client-controlled requester key (review R2):** IP-based requester limits rely on
+  `rawRequest.ip`, which is proxy-dependent in callable functions; documented in D-021.
+  Phone-number and global limits carry the primary abuse-prevention weight.
 - Firestore counter contention under very high concurrency: transaction retry budget is 20
   attempts; validated at test concurrency, not at production scale (Phase 5).
 - A database leak exposes HMACs, not OTPs: offline guessing against the code hash is

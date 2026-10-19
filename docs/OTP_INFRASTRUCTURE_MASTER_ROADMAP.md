@@ -3,7 +3,9 @@
 **Document status:** Living specification. This is the primary source of truth for project
 scope, architecture, and phase progress.
 **Last updated:** 2026-10-17
-**Current phase:** Phase 2 — READY FOR REVIEW (Phase 1 APPROVED; Phases 3–7 NOT STARTED)
+**Current phase:** Phase 3 — IN PROGRESS (subphase 3.1 authorized 2026-10-17; owner
+decisions D-030/D-031 recorded; Phase 2 APPROVED WITH CONDITIONS; D-018 final policy and
+the D-009 deployment blocker remain open)
 
 > This document describes the **planned** architecture. Except where explicitly marked
 > **Confirmed**, nothing in this document is implemented. The repository currently contains
@@ -548,7 +550,9 @@ Evidence required: official documentation links, provider statements, and — wh
 
 ### 20.2 Phase 2 — Secure OTP Engine and Backend Foundation
 
-**Status: READY FOR REVIEW** (implementation complete 2026-10-17; evidence in Appendix B)
+**Status: APPROVED WITH CONDITIONS** (owner message 2026-10-17, following the final
+adversarial re-review: PASS WITH CONDITIONS; implementation complete 2026-10-17; evidence in
+Appendix B)
 
 **Remediation 2026-10-17 (0.2.1):** adversarial-review conditions closed: review defect D1
 fixed via the explicit environment/provider policy (D-025); missing tests added (audit
@@ -595,7 +599,12 @@ Phase 2 is marked APPROVED.
 
 ### 20.3 Phase 3 — Firebase Identity and Custom-Token Integration
 
-**Status: NOT STARTED** — requires Phase 2 approval
+**Status: IN PROGRESS (subphase 3.1, fakes only)** — Phase 2 approved with conditions
+2026-10-17; owner authorized Phase 3 implementation subphase by subphase (D-030 direction,
+D-031 final decisions on ID-5/ID-7/ID-8/ID-9). Each subphase reports its diff and results and
+stops at its gate. No real deployment, real SMS, production credentials, or CoolBus access
+is authorized. D-018 final policy is due before Phase 3 concludes; D-009 keeps real
+deployment blocked.
 
 - **Objective:** verified phone → correct Firebase identity → custom token, against a
   dedicated test Firebase project.
@@ -724,18 +733,22 @@ Phase 2 is marked APPROVED.
 - Commercial SMS provider capabilities, pricing, and compliance onboarding (Phase 7).
 - CoolBus repository state, auth coupling, and governance process (Phase 6).
 
-**Risk register (top risks):**
+**Risk register (top project risks, `PR-x`):**
 
-| #   | Risk                                 | Impact                               | Mitigation                                                                                     |
-| --- | ------------------------------------ | ------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| R1  | SMS pumping/toll fraud               | Direct cost + abuse                  | Server-side rate limits, monitoring, provider caps (Phase 2/7)                                 |
-| R2  | OTP bypass via race/replay           | Security                             | Atomic consumption + adversarial tests (Phase 2)                                               |
-| R3  | Duplicate/incorrect identity mapping | User lockout, data corruption        | Identity resolution tests, no client UID trust, conflict rejection (Phase 3)                   |
-| R4  | Relay device compromise              | Message interception for routed jobs | Scoped jobs, revocation, monitoring; device never holds verification/token authority (Phase 4) |
-| R5  | Compliance blocker for SIM/OTP SMS   | Project stall                        | Section 18 verification before real-user use                                                   |
-| R6  | CoolBus regression                   | User-facing outage                   | Feature flag, phone-auth fallback, rollback drill (Phase 6)                                    |
-| R7  | Toolchain drift (TS 7/linter)        | Build friction                       | Pinned toolchain, D-003 documented, revisit after linter support                               |
-| R8  | Emulator vs production behavior gaps | Late surprises                       | Separate test Firebase project in Phase 3, explicit parity tests                               |
+> Identifiers in this register are `PR-1`…`PR-8` (project risks) to avoid collision with the
+> remediation register `R1`…`R5` in section 23, which records the risks raised by the
+> adversarial review.
+
+| #    | Risk                                 | Impact                               | Mitigation                                                                                     |
+| ---- | ------------------------------------ | ------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| PR-1 | SMS pumping/toll fraud               | Direct cost + abuse                  | Server-side rate limits, monitoring, provider caps (Phase 2/7)                                 |
+| PR-2 | OTP bypass via race/replay           | Security                             | Atomic consumption + adversarial tests (Phase 2)                                               |
+| PR-3 | Duplicate/incorrect identity mapping | User lockout, data corruption        | Identity resolution tests, no client UID trust, conflict rejection (Phase 3)                   |
+| PR-4 | Relay device compromise              | Message interception for routed jobs | Scoped jobs, revocation, monitoring; device never holds verification/token authority (Phase 4) |
+| PR-5 | Compliance blocker for SIM/OTP SMS   | Project stall                        | Section 18 verification before real-user use                                                   |
+| PR-6 | CoolBus regression                   | User-facing outage                   | Feature flag, phone-auth fallback, rollback drill (Phase 6)                                    |
+| PR-7 | Toolchain drift (TS 7/linter)        | Build friction                       | Pinned toolchain, D-003 documented, revisit after linter support                               |
+| PR-8 | Emulator vs production behavior gaps | Late surprises                       | Separate test Firebase project in Phase 3, explicit parity tests                               |
 
 **Approval gates (must not proceed without explicit owner approval):**
 
@@ -777,14 +790,21 @@ The full record (context, alternatives, rationale, consequences, status, dates) 
 - D-025 explicit environment and delivery-provider policy — **resolves adversarial-review
   defect D1** (implemented in 0.2.1); D-026 audit-failure monitoring requirement (Phase 5/7);
   D-027 delivery-job reconciliation requirement (Phase 4); D-028 challenge-purpose semantics
-  required before client exposure (Phase 3).
+  restricted to `sign-in` for Phase 3 (owner-approved direction).
+- D-029 Phase 3 planning artifacts (`docs/IDENTITY_DESIGN.md`, `docs/PHASE3_PLAN.md`) —
+  accepted as drafts; D-030 owner-approved Phase 3 direction (2026-10-17); D-031 final
+  decisions on ID-5 (response contract), ID-7 (audit fields), ID-8 (recycled numbers,
+  controlled pilot only), ID-9 (`verifyOtp` phone binding) — implementation authorized
+  subphase by subphase from 3.1.
 
 ---
 
 ## 23. Remediation register — adversarial review (2026-10-17)
 
 Risks raised by the adversarial review of `8c71ff5` that are accepted for the next phase.
-Each has a mitigation phase and closure criteria; none may be silently dropped.
+Each has a mitigation phase and closure criteria; none may be silently dropped. These `R1`…`R5`
+identifiers are distinct from the project risk register `PR-1`…`PR-8` in section 21 and must not
+be conflated with it.
 
 | ID  | Risk                                                                                              | Mitigation                                                                 | Phase                          | Acceptance criteria                                                                                    | Status               |
 | --- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ | -------------------- |

@@ -105,7 +105,7 @@ functions/            Cloud Functions backend (TypeScript)
   src/otp/            policy, phone normalization, CSPRNG, hashing, engine
   src/storage/        transaction abstraction + Firestore adapter
 packages/contracts/   shared delivery-provider contract (types only)
-tests/unit/           fast deterministic tests (85)
+tests/unit/           fast deterministic tests (138)
 tests/integration/    Firestore-emulator engine tests
 tests/security/       Firestore rules denial tests
 tests/helpers/        in-memory database (optimistic concurrency), fixed clock, fakes
@@ -119,14 +119,16 @@ created yet; see the roadmap.
 
 ## Documentation index
 
-| Document                                                                               | Purpose                                                      |
-| -------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| [docs/OTP_INFRASTRUCTURE_MASTER_ROADMAP.md](docs/OTP_INFRASTRUCTURE_MASTER_ROADMAP.md) | Source of truth: seven phases, statuses, acceptance criteria |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)                                           | Components, boundaries, data flows                           |
-| [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)                                           | Assets, trust boundaries, threats, mitigations               |
-| [docs/DATA_MODEL.md](docs/DATA_MODEL.md)                                               | Proposed collections and field-level handling                |
-| [docs/API_CONTRACT.md](docs/API_CONTRACT.md)                                           | Endpoints, error envelope, semantics                         |
-| [docs/DECISIONS.md](docs/DECISIONS.md)                                                 | Architecture decision log                                    |
+| Document                                                                               | Purpose                                                         |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| [docs/OTP_INFRASTRUCTURE_MASTER_ROADMAP.md](docs/OTP_INFRASTRUCTURE_MASTER_ROADMAP.md) | Source of truth: seven phases, statuses, acceptance criteria    |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)                                           | Components, boundaries, data flows                              |
+| [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)                                           | Assets, trust boundaries, threats, mitigations                  |
+| [docs/DATA_MODEL.md](docs/DATA_MODEL.md)                                               | Proposed collections and field-level handling                   |
+| [docs/API_CONTRACT.md](docs/API_CONTRACT.md)                                           | Endpoints, error envelope, semantics                            |
+| [docs/DECISIONS.md](docs/DECISIONS.md)                                                 | Architecture decision log                                       |
+| [docs/IDENTITY_DESIGN.md](docs/IDENTITY_DESIGN.md)                                     | Phase 3 identity/token design (final proposed; decision matrix) |
+| [docs/PHASE3_PLAN.md](docs/PHASE3_PLAN.md)                                             | Phase 3 plan, proposals, and approval status                    |
 
 ## License
 
