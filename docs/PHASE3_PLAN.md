@@ -169,8 +169,20 @@ Each subphase ends with checks run, diff reported, and an explicit stop at the d
   at most one success); mismatch audit reason `phone_mismatch`. Plus: existing UID
   resolution; link-miss fallback; pepper-rotation simulation (old-key miss → Auth fallback
   resolves and re-fills); disabled/missing/incomplete-user conflict; uid mismatch conflict.
+- **Carried gates from the Phase 3.1 review (mandatory, documented 2026-10-17):**
+  - **F1 — audit-sink failure semantics:** before identity resolution is wired into runtime
+    composition (3.4), either add local defensive handling that matches the established
+    audit policy or explicitly compose `SafeAuditSink`, and add a test proving that an audit
+    failure cannot turn an otherwise successful resolution into an unexpected request
+    failure. Record the chosen option and evidence; do not mark F1 closed without evidence.
+  - **F3/F4 — audit event semantics:** decide and document the success `reasonCode`
+    convention and omit unnecessary `uid: null` fields rather than expanding audit payloads.
+  - **Pepper-rotation orphan links:** old-pepper-hash `identity_links` documents are re-keyed
+    on next resolution but never cleaned up; document the cleanup approach for 3.2 or a
+    later appropriate phase. No cleanup behavior is introduced in 3.1.
 - **Acceptance:** all resolver and phone-binding tests green; audit events contain no
-  tokens/codes/phones.
+  tokens/codes/phones; the carried gates above are either closed with evidence or explicitly
+  scheduled before runtime wiring.
 
 ### 3.3 — New-identity creation, idempotency, recovery
 
@@ -256,6 +268,11 @@ Each subphase ends with checks run, diff reported, and an explicit stop at the d
 | 9   | Cross-purpose challenge reuse rejection                            | existing + 3.4 regression |
 | 10  | Callable security behavior under the selected test policy          | 3.4, 3.6                  |
 | 11  | Phase 2 regression (rates, lifecycle, audit, provider fail-closed) | 3.6                       |
+
+Carried from the Phase 3.1 review (tracked in §6, subphase 3.2): **F1** audit-failure
+non-interference must be closed with evidence before runtime wiring (3.4); **F3/F4** audit
+event semantics are decided/documented in 3.2 without expanding payloads; pepper-rotation
+orphan-link cleanup is documented for 3.2 or a later phase.
 
 ## 8. Emulator-untestable behaviors (remain unverified until 3.7)
 

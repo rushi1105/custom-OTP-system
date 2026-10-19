@@ -1,0 +1,227 @@
+import type { IdentityStore } from '../../functions/src/identity/identity-store.js';
+import { IdentityResolver } from '../../functions/src/identity/resolver.js';
+import { IDENTITY_LINK_TTL_SECONDS } from '../../functions/src/identity/policy.js';
+import type { IdentityFailureReason } from '../../functions/src/identity/errors.js';
+import type {
+  AuthPort,
+  AuthUserRecord,
+  IdentityLinkFillResult,
+  IdentityLinkRecord,
+} from '../../functions/src/identity/types.js';
+import { FixedClock } from './fixed-clock.js';
+import { RecordingAuditSink } from './recording-audit-sink.js';
+import { RecordingLogger } from './recording-logger.js';
+import { TEST_PEPPER, TEST_PEPPER_VERSION, TEST_START_ISO } from './engine-fixture.js';
+
+/**
+ * In-memory IdentityStore implementing the same guarded semantics required of
+ * the Firestore adapter (subphase 3.2). Test-only; exercises the shared store
+ * contract in tests/helpers/identity-store-contract.ts.
+ */
+export class InMemoryIdentityStore implements IdentityStore {
+  private readonly links = new Map<string, IdentityLinkRecord>();
+
+  readonly getLinkCalls: string[] = [];
+  readonly fillCalls: string[] = [];
+  failGetLink = false;
+  failFill = false;
+  nextFillConflict: IdentityFailureReason | null = null;
+
+  async getLink(phoneHash: string): Promise<IdentityLinkRecord | null> {
+    this.getLinkCalls.push(phoneHash);
+    if (this.failGetLink) {
+      throw new Error('identity store unavailable');
+    }
+    const record = this.links.get(phoneHash);
+    return record === undefined ? null : { ...record };
+  }
+
+  async fillActiveLink(input: {
+    readonly phoneHash: string;
+    readonly uid: string;
+    readonly challengeId: string;
+    readonly pepperVersion: number;
+    readonly nowMs: number;
+  }): Promise<IdentityLinkFillResult> {
+    this.fillCalls.push(input.phoneHash);
+    if (this.failFill) {
+      throw new Error('identity store unavailable');
+    }
+    if (this.nextFillConflict !== null) {
+      return { outcome: 'conflict', reason: this.nextFillConflict };
+    }
+    const nowIso = new Date(input.nowMs).toISOString();
+    const existing = this.links.get(input.phoneHash);
+    if (existing === undefined) {
+      this.links.set(input.phoneHash, {
+        phoneHash: input.phoneHash,
+        status: 'active',
+        uid: input.uid,
+        claimId: null,
+        claimedAtMs: null,
+        claimExpiresAtMs: null,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        verifiedAt: nowIso,
+        lastChallengeId: input.challengeId,
+        pepperVersion: input.pepperVersion,
+        ttlAtMs: input.nowMs + IDENTITY_LINK_TTL_SECONDS * 1000,
+      });
+      return { outcome: 'filled' };
+    }
+    if (existing.status === 'revoked') {
+      return { outcome: 'conflict', reason: 'conflict_link_revoked' };
+    }
+    if (existing.status === 'pending_creation') {
+      return { outcome: 'conflict', reason: 'claim_pending' };
+    }
+    if (existing.uid !== input.uid) {
+      return { outcome: 'conflict', reason: 'conflict_uid_mismatch' };
+    }
+    this.links.set(input.phoneHash, {
+      ...existing,
+      updatedAt: nowIso,
+      verifiedAt: nowIso,
+      lastChallengeId: input.challengeId,
+      pepperVersion: input.pepperVersion,
+    });
+    return { outcome: 'refreshed' };
+  }
+
+  seedLink(record: IdentityLinkRecord): void {
+    this.links.set(record.phoneHash, { ...record });
+  }
+
+  peekLink(phoneHash: string): IdentityLinkRecord | undefined {
+    const record = this.links.get(phoneHash);
+    return record === undefined ? undefined : { ...record };
+  }
+}
+
+/** Test-only Auth port; no Firebase imports anywhere in the domain layer. */
+export class FakeAuthPort implements AuthPort {
+  private readonly usersByUid = new Map<string, AuthUserRecord>();
+  private readonly usersByPhone = new Map<string, string>();
+  private sequence = 0;
+
+  readonly createTokenCalls: string[] = [];
+  failGetUser = false;
+  failGetUserByPhoneNumber = false;
+  failCreateUser = false;
+  failCreateCustomToken = false;
+
+  seedUser(user: AuthUserRecord): void {
+    this.usersByUid.set(user.uid, { ...user });
+    if (user.phoneNumber !== null) {
+      this.usersByPhone.set(user.phoneNumber, user.uid);
+    }
+  }
+
+  async getUser(uid: string): Promise<AuthUserRecord | null> {
+    if (this.failGetUser) {
+      throw new Error('auth unavailable');
+    }
+    const user = this.usersByUid.get(uid);
+    return user === undefined ? null : { ...user };
+  }
+
+  async getUserByPhoneNumber(e164: string): Promise<AuthUserRecord | null> {
+    if (this.failGetUserByPhoneNumber) {
+      throw new Error('auth unavailable');
+    }
+    const uid = this.usersByPhone.get(e164);
+    if (uid === undefined) {
+      return null;
+    }
+    const user = this.usersByUid.get(uid);
+    return user === undefined ? null : { ...user };
+  }
+
+  async createUserWithPhone(e164: string): Promise<AuthUserRecord> {
+    if (this.failCreateUser) {
+      throw new Error('auth unavailable');
+    }
+    if (this.usersByPhone.has(e164)) {
+      throw new Error('auth/phone-already-exists');
+    }
+    this.sequence += 1;
+    const user: AuthUserRecord = {
+      uid: `uid_created_${String(this.sequence)}`,
+      phoneNumber: e164,
+      disabled: false,
+    };
+    this.seedUser(user);
+    return { ...user };
+  }
+
+  async createCustomToken(uid: string): Promise<string> {
+    if (this.failCreateCustomToken) {
+      throw new Error('auth unavailable');
+    }
+    this.createTokenCalls.push(uid);
+    return `fake-custom-token-for-${uid}`;
+  }
+}
+
+export interface IdentityFixture {
+  readonly resolver: IdentityResolver;
+  readonly store: InMemoryIdentityStore;
+  readonly auth: FakeAuthPort;
+  readonly clock: FixedClock;
+  readonly logger: RecordingLogger;
+  readonly audit: RecordingAuditSink;
+  readonly pepper: string;
+  readonly pepperVersion: number;
+}
+
+export function createIdentityFixture(options?: {
+  readonly startIso?: string;
+  readonly pepper?: string;
+  readonly pepperVersion?: number;
+}): IdentityFixture {
+  const clock = new FixedClock(options?.startIso ?? TEST_START_ISO);
+  const store = new InMemoryIdentityStore();
+  const auth = new FakeAuthPort();
+  const logger = new RecordingLogger();
+  const audit = new RecordingAuditSink();
+  const resolver = new IdentityResolver({
+    store,
+    auth,
+    clock: () => clock.now(),
+    logger,
+    audit,
+    pepper: options?.pepper ?? TEST_PEPPER,
+    pepperVersion: options?.pepperVersion ?? TEST_PEPPER_VERSION,
+  });
+  return {
+    resolver,
+    store,
+    auth,
+    clock,
+    logger,
+    audit,
+    pepper: options?.pepper ?? TEST_PEPPER,
+    pepperVersion: options?.pepperVersion ?? TEST_PEPPER_VERSION,
+  };
+}
+
+export function buildIdentityLink(
+  overrides: Partial<IdentityLinkRecord> & { readonly phoneHash: string },
+): IdentityLinkRecord {
+  const nowIso = TEST_START_ISO;
+  return {
+    phoneHash: overrides.phoneHash,
+    status: 'active',
+    uid: null,
+    claimId: null,
+    claimedAtMs: null,
+    claimExpiresAtMs: null,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    verifiedAt: null,
+    lastChallengeId: null,
+    pepperVersion: TEST_PEPPER_VERSION,
+    ttlAtMs: Date.parse(nowIso) + IDENTITY_LINK_TTL_SECONDS * 1000,
+    ...overrides,
+  };
+}

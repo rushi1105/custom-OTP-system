@@ -10,7 +10,14 @@ export type AuditEventType =
   | 'otp.verification.failed'
   | 'otp.challenge.locked'
   | 'otp.challenge.voided'
-  | 'otp.challenge.expired';
+  | 'otp.challenge.expired'
+  | 'identity.resolved'
+  | 'identity.created'
+  | 'identity.link.filled'
+  | 'identity.conflict'
+  | 'identity.claim.expired'
+  | 'token.issued'
+  | 'token.issue_failed';
 
 export type AuditActorType = 'client' | 'system';
 
@@ -24,6 +31,12 @@ export interface AuditEvent {
   readonly challengeId: string | null;
   readonly jobId: string | null;
   readonly phoneHash: string | null;
+  /**
+   * Resolved Firebase UID for identity/token events (D-031 ID-7). Optional and
+   * omitted for events where it is not relevant; never contains tokens, codes,
+   * raw phone numbers, or client-supplied claims.
+   */
+  readonly uid?: string | null;
   readonly outcome: 'success' | 'failure';
   readonly reasonCode: string | null;
   readonly ttlAtMs: number;
