@@ -78,6 +78,11 @@ export class InMemoryDocumentDatabase implements DocumentDatabase {
     this.entries.set(key, { data, version: (current?.version ?? -1) + 1 });
   }
 
+  async get<T>(ref: DocumentRef): Promise<{ readonly data: T; readonly version: number } | null> {
+    const entry = this.entries.get(storageKey(ref));
+    return entry === undefined ? null : { data: entry.data as T, version: entry.version };
+  }
+
   getDocument<T>(ref: DocumentRef): T | undefined {
     return this.entries.get(storageKey(ref))?.data as T | undefined;
   }

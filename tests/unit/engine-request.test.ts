@@ -157,6 +157,7 @@ describe('OtpEngine.requestChallenge', () => {
       challengeId: first.challengeId,
       code: firstCode,
       purpose: 'sign-in',
+      phoneRaw: PHONE,
       requesterHash: REQUESTER,
     });
     expect(replay).toMatchObject({ outcome: 'invalid', internalReason: 'voided' });
@@ -310,6 +311,7 @@ describe('OtpEngine.requestChallenge', () => {
       challengeId: first.challengeId,
       code: first.code,
       purpose: 'sign-in',
+      phoneRaw: PHONE,
       requesterHash: REQUESTER,
     });
     expect(verified.outcome).toBe('verified');

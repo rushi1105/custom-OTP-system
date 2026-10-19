@@ -39,11 +39,18 @@ async function createChallenge(
   return { challengeId: result.challengeId, code: extractOtpCodeFromMessage(message.body) };
 }
 
-function verify(fixture: EngineFixture, challengeId: string, code: string, purpose = 'sign-in') {
+function verify(
+  fixture: EngineFixture,
+  challengeId: string,
+  code: string,
+  purpose = 'sign-in',
+  phoneRaw: string = PHONE,
+) {
   return fixture.engine.verifyChallenge({
     challengeId,
     code,
     purpose,
+    phoneRaw,
     requesterHash: REQUESTER,
   });
 }
@@ -163,10 +170,22 @@ describe('OtpEngine.verifyChallenge', () => {
     const first = await createChallenge(fixture, PHONE);
     const second = await createChallenge(fixture, '+919999999999', 'requester-2');
 
-    const crossed = await verify(fixture, second.challengeId, first.code);
+    const crossed = await verify(
+      fixture,
+      second.challengeId,
+      first.code,
+      'sign-in',
+      '+919999999999',
+    );
     expect(crossed).toMatchObject({ outcome: 'invalid', internalReason: 'wrong_code' });
 
-    const correctSecond = await verify(fixture, second.challengeId, second.code);
+    const correctSecond = await verify(
+      fixture,
+      second.challengeId,
+      second.code,
+      'sign-in',
+      '+919999999999',
+    );
     expect(correctSecond.outcome).toBe('verified');
   });
 
@@ -192,6 +211,7 @@ describe('OtpEngine.verifyChallenge', () => {
         challengeId: 'c_AAAAAAAAAAAAAAAAAAAAAA',
         code: '123456',
         purpose: 'bogus',
+        phoneRaw: PHONE,
         requesterHash: REQUESTER,
       }),
     ).toEqual({ outcome: 'invalid_input' });
@@ -271,6 +291,7 @@ describe('OtpEngine.verifyChallenge', () => {
       challengeId,
       code,
       purpose: 'sign-in',
+      phoneRaw: PHONE,
       requesterHash: REQUESTER,
     });
 

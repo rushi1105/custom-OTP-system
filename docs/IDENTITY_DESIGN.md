@@ -56,6 +56,26 @@ that E.164 **only if** `HMAC(pepper, "phone:v1:" + e164)` equals the challenge's
 is a _locator for the already-created challenge_, never an identity input: possession of a
 code plus a mismatched phone can never resolve to any identity.
 
+### 2.3 Pepper rotation and identity links
+
+- `identity_links` document ids use the hash of the **current** pepper. On rotation, the
+  lookup by the new hash misses; resolution falls back to the pepper-independent
+  `getUserByPhoneNumber` (Auth is authoritative) and **re-fills the link under the new
+  hash**. This preserves resolution and prevents duplicate identity creation regardless of
+  how many link documents were written under older peppers.
+- Old-hash records are **stale cache entries**. They must never be treated as identity
+  authority: only the current-pepper lookup is consulted, and any hit is validated against
+  Auth. A stale record therefore cannot cause a reassignment or block a legitimate
+  resolution.
+- No automatic bulk cleanup is implemented in Phase 3. A safe cleanup requires an
+  operator-reviewed migration that (a) confirms the old pepper is fully retired and no
+  writer uses it, (b) identifies records by `pepperVersion`, (c) runs dry-run counts first,
+  and (d) deletes only stale cache documents after confirming Auth remains the source of
+  truth. This is deferred to the appropriate operations phase (Phase 5/7) and must not
+  delete current-pepper links or mutate `uid` values. Acceptance criteria for that future
+  work: dry-run report reviewed, zero remaining writers under the old version, deletion
+  limited to old-version records, and no resolution regression in the test environment.
+
 ## 3. Existing identities
 
 ### 3.1 Resolution order
@@ -203,7 +223,11 @@ up to 3 resolution attempts with 150 ms backoff, then `IDENTITY_UNAVAILABLE`.
 Phone-binding mismatch is treated as a generic verification failure (`CODE_INVALID`), is
 **not** consumed, and does **not** increment the attempt counter (it can only occur through
 client error; the code remains valid for the correct phone). Audit reason:
-`phone_mismatch`.
+`phone_mismatch`. The check runs inside the consuming transaction **before any write** (so the
+requester verify window is unchanged too), and only when the challenge's pepper version
+matches the running pepper; rotated challenges fall through to the existing
+`pepper_version_mismatch` handling. Missing, malformed, or oversized phone input maps to the
+same generic surface with internal reason `phone_invalid` and likewise never touches state.
 
 ### 6.2 Consume-first consequences (ID-4 — documented trade-off)
 
@@ -274,7 +298,14 @@ Phase 3).
 
 Audit events: `identity.resolved`, `identity.created`, `identity.link.filled`,
 `identity.conflict`, `identity.claim.expired`, `token.issued`, `token.issue_failed` — plus
-new verification audit reason `phone_mismatch`.
+new verification audit reasons `phone_mismatch` and `phone_invalid` (both external generic
+`CODE_INVALID`).
+
+**Audit semantics (implemented in Phase 3.2):** success events follow the engine
+convention — `outcome: 'success'` and `reasonCode: null` (resolution source and fill outcome
+remain in server logs, not in `reasonCode`). Failure events use `reasonCode` for the stable
+internal reason. `uid` is included only where relevant and **omitted entirely** when unknown
+(no `uid: null` keys).
 
 **Recommended minimum fields:** existing event envelope (`eventId`, `type`, `occurredAt`,
 `actorType`, `actorHash`, `purpose`, `challengeId`, `outcome`, `reasonCode`, `ttlAtMs`)
@@ -288,20 +319,21 @@ remains Phase 5/compliance work.
 
 ## 9. Failure catalogue (final proposed behavior)
 
-| Scenario                                          | Behavior                                                                                     |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Phone binding mismatch                            | Generic `CODE_INVALID`; challenge not consumed; no attempt increment; audit `phone_mismatch` |
-| Link active, user valid                           | Resolve; mint; respond                                                                       |
-| Link drift (missing/disabled/mismatch/incomplete) | `IDENTITY_UNAVAILABLE`; audit `identity.conflict`; no mutation                               |
-| Link absent, Auth found                           | Fill link; resolve                                                                           |
-| Link absent, Auth not found, conditions met       | Claim → re-check → create → finalize → resolve                                               |
-| Claim in progress (< TTL)                         | Bounded retry; then `IDENTITY_UNAVAILABLE`                                                   |
-| Claim expired                                     | Re-check Auth; finalize if found; else reclaim and create                                    |
-| Creation succeeded, finalize failed               | `IDENTITY_UNAVAILABLE`; next resolution recovers via Auth; user never deleted                |
-| `phone-already-exists` during create              | Re-check Auth; finalize if found; else `IDENTITY_UNAVAILABLE`                                |
-| Token minting throws                              | `IDENTITY_UNAVAILABLE`; audit `token.issue_failed`; challenge stays consumed                 |
-| Firestore unavailable during claim/finalize       | `IDENTITY_UNAVAILABLE`; audit best-effort                                                    |
-| Any post-consumption failure                      | Fresh OTP required; no exactly-once promise                                                  |
+| Scenario                                          | Behavior                                                                                                |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Phone binding mismatch                            | Generic `CODE_INVALID`; challenge not consumed; no attempt/rate-limit increment; audit `phone_mismatch` |
+| Phone missing/malformed/oversized                 | Generic `CODE_INVALID`; no state change; audit reason reserved (`phone_invalid`)                        |
+| Link active, user valid                           | Resolve; mint; respond                                                                                  |
+| Link drift (missing/disabled/mismatch/incomplete) | `IDENTITY_UNAVAILABLE`; audit `identity.conflict`; no mutation                                          |
+| Link absent, Auth found                           | Fill link; resolve                                                                                      |
+| Link absent, Auth not found, conditions met       | Claim → re-check → create → finalize → resolve                                                          |
+| Claim in progress (< TTL)                         | Bounded retry; then `IDENTITY_UNAVAILABLE`                                                              |
+| Claim expired                                     | Re-check Auth; finalize if found; else reclaim and create                                               |
+| Creation succeeded, finalize failed               | `IDENTITY_UNAVAILABLE`; next resolution recovers via Auth; user never deleted                           |
+| `phone-already-exists` during create              | Re-check Auth; finalize if found; else `IDENTITY_UNAVAILABLE`                                           |
+| Token minting throws                              | `IDENTITY_UNAVAILABLE`; audit `token.issue_failed`; challenge stays consumed                            |
+| Firestore unavailable during claim/finalize       | `IDENTITY_UNAVAILABLE`; audit best-effort                                                               |
+| Any post-consumption failure                      | Fresh OTP required; no exactly-once promise                                                             |
 
 ## 10. Decision matrix (resolved — owner decisions 2026-10-17, D-031)
 

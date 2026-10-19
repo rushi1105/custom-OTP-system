@@ -37,6 +37,17 @@ export class FirestoreDocumentDatabase implements DocumentDatabase {
     await this.document(ref).set(toPersistedData(data));
   }
 
+  async get<T>(ref: DocumentRef): Promise<StoredDocument<T> | null> {
+    const snapshot = await this.document(ref).get();
+    if (!snapshot.exists) {
+      return null;
+    }
+    return {
+      data: snapshot.data() as T,
+      version: snapshot.updateTime?.toMillis() ?? 0,
+    };
+  }
+
   private document(ref: DocumentRef) {
     return this.firestore.collection(ref.collection).doc(ref.id);
   }

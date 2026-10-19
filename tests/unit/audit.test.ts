@@ -36,6 +36,9 @@ function failingDatabase(): DocumentDatabase {
     runTransaction: async () => {
       throw new Error('audit database unavailable');
     },
+    get: async () => {
+      throw new Error('audit database unavailable');
+    },
     set: async <T>(_ref: DocumentRef, _data: T): Promise<void> => {
       throw new Error('audit database unavailable');
     },

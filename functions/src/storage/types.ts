@@ -19,6 +19,7 @@ export interface TransactionContext {
 
 export interface DocumentDatabase {
   runTransaction<T>(updateFn: (tx: TransactionContext) => Promise<T>): Promise<T>;
+  get<T>(ref: DocumentRef): Promise<StoredDocument<T> | null>;
   set<T>(ref: DocumentRef, data: T): Promise<void>;
 }
 
@@ -29,4 +30,5 @@ export const COLLECTIONS = {
   rateLimits: 'rate_limits',
   deliveryJobs: 'delivery_jobs',
   auditEvents: 'audit_events',
+  identityLinks: 'identity_links',
 } as const;

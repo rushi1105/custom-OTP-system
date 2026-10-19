@@ -313,6 +313,7 @@ export class OtpEngine {
     readonly challengeId: unknown;
     readonly code: unknown;
     readonly purpose: unknown;
+    readonly phoneRaw: unknown;
     readonly requesterHash: string;
   }): Promise<VerifyOutcome> {
     const { policy, pepper, pepperVersion, db } = this.deps;
@@ -323,6 +324,14 @@ export class OtpEngine {
     ) {
       return { outcome: 'invalid_input' };
     }
+    const phone = normalizePhone(input.phoneRaw);
+    if (phone === null) {
+      // The supplied phone is a locator for the already-created challenge, not
+      // an identity input. Invalid/malformed values fail with the same generic
+      // surface as a mismatch and never touch challenge state (ID-9).
+      return { outcome: 'invalid', internalReason: 'phone_invalid' };
+    }
+    const expectedPhoneHash = hashPhone(pepper, phone);
     const challengeId = input.challengeId;
     const code = input.code;
     const purpose: OtpPurpose = input.purpose;
@@ -345,6 +354,23 @@ export class OtpEngine {
       );
       if (verifyEvaluation.blocked) {
         return { kind: 'rate_limited', retryAfterSeconds: verifyEvaluation.retryAfterSeconds };
+      }
+
+      // ID-9 phone binding: compare inside the consuming transaction, before any
+      // write. A mismatch must leave the challenge and rate-limit state
+      // unchanged. Rotated challenges fall through to the existing
+      // pepper_version_mismatch handling below (an old hash cannot be compared
+      // against the current pepper).
+      if (
+        challengeSnapshot !== null &&
+        challengeSnapshot.data.pepperVersion === pepperVersion &&
+        challengeSnapshot.data.phoneHash !== expectedPhoneHash
+      ) {
+        return {
+          kind: 'invalid',
+          reason: 'phone_mismatch',
+          known: { challengeId, phoneHash: challengeSnapshot.data.phoneHash },
+        };
       }
 
       tx.write(requesterRef, {

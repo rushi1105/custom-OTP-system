@@ -11,6 +11,6 @@ describeIdentityStoreContract('InMemoryIdentityStore', () => {
     seedLink: async (record) => {
       store.seedLink(record);
     },
-    peekLink: (phoneHash) => store.peekLink(phoneHash),
+    peekLink: async (phoneHash) => store.peekLink(phoneHash),
   };
 });

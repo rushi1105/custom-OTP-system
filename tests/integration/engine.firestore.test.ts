@@ -93,6 +93,7 @@ describe.skipIf(!process.env['FIRESTORE_EMULATOR_HOST'])(
         challengeId,
         code,
         purpose: 'sign-in',
+        phoneRaw: PHONE,
         requesterHash: REQUESTER,
       });
 
@@ -113,6 +114,7 @@ describe.skipIf(!process.env['FIRESTORE_EMULATOR_HOST'])(
             challengeId,
             code,
             purpose: 'sign-in',
+            phoneRaw: PHONE,
             requesterHash: REQUESTER,
           }),
         ),
@@ -150,6 +152,7 @@ describe.skipIf(!process.env['FIRESTORE_EMULATOR_HOST'])(
         challengeId: first.challengeId,
         code: first.code,
         purpose: 'sign-in',
+        phoneRaw: PHONE,
         requesterHash: REQUESTER,
       });
       expect(verified.outcome).toBe('verified');
@@ -158,6 +161,7 @@ describe.skipIf(!process.env['FIRESTORE_EMULATOR_HOST'])(
         challengeId: first.challengeId,
         code: first.code,
         purpose: 'sign-in',
+        phoneRaw: PHONE,
         requesterHash: REQUESTER,
       });
       expect(replay).toMatchObject({ outcome: 'invalid', internalReason: 'consumed' });
@@ -169,6 +173,7 @@ describe.skipIf(!process.env['FIRESTORE_EMULATOR_HOST'])(
         challengeId: second.challengeId,
         code: second.code,
         purpose: 'sign-in',
+        phoneRaw: PHONE,
         requesterHash: REQUESTER,
       });
       expect(expired).toMatchObject({ outcome: 'invalid', internalReason: 'expired' });

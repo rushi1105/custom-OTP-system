@@ -8,7 +8,7 @@ import { buildIdentityLink } from './identity-fakes.js';
 export interface IdentityStoreHarness {
   readonly store: IdentityStore;
   seedLink(record: IdentityLinkRecord): Promise<void>;
-  peekLink(phoneHash: string): IdentityLinkRecord | undefined;
+  peekLink(phoneHash: string): Promise<IdentityLinkRecord | undefined>;
 }
 
 const PHONE_HASH = 'a'.repeat(64);
@@ -45,7 +45,7 @@ export function describeIdentityStoreContract(
       });
 
       expect(result).toEqual({ outcome: 'filled' });
-      const stored = peekLink(PHONE_HASH);
+      const stored = await peekLink(PHONE_HASH);
       expect(stored).toMatchObject({
         status: 'active',
         uid: 'uid_1',
@@ -67,7 +67,7 @@ export function describeIdentityStoreContract(
         pepperVersion: 1,
         nowMs: NOW_MS,
       });
-      const createdAt = peekLink(PHONE_HASH)?.createdAt;
+      const createdAt = (await peekLink(PHONE_HASH))?.createdAt;
 
       const laterMs = NOW_MS + 60_000;
       const result = await store.fillActiveLink({
@@ -79,7 +79,7 @@ export function describeIdentityStoreContract(
       });
 
       expect(result).toEqual({ outcome: 'refreshed' });
-      const stored = peekLink(PHONE_HASH);
+      const stored = await peekLink(PHONE_HASH);
       expect(stored?.createdAt).toBe(createdAt);
       expect(stored).toMatchObject({
         uid: 'uid_1',
@@ -98,7 +98,7 @@ export function describeIdentityStoreContract(
         pepperVersion: 1,
         nowMs: NOW_MS,
       });
-      const before = peekLink(PHONE_HASH);
+      const before = await peekLink(PHONE_HASH);
 
       const result = await store.fillActiveLink({
         phoneHash: PHONE_HASH,
@@ -109,7 +109,7 @@ export function describeIdentityStoreContract(
       });
 
       expect(result).toEqual({ outcome: 'conflict', reason: 'conflict_uid_mismatch' });
-      expect(peekLink(PHONE_HASH)).toEqual(before);
+      expect(await peekLink(PHONE_HASH)).toEqual(before);
     });
 
     it('refuses to fill over a revoked link', async () => {
@@ -149,7 +149,7 @@ export function describeIdentityStoreContract(
       });
 
       expect(result).toEqual({ outcome: 'conflict', reason: 'claim_pending' });
-      expect(peekLink(PHONE_HASH)?.status).toBe('pending_creation');
+      expect((await peekLink(PHONE_HASH))?.status).toBe('pending_creation');
     });
 
     it('keeps records isolated per phone hash', async () => {
@@ -163,7 +163,7 @@ export function describeIdentityStoreContract(
       });
 
       expect(await store.getLink(OTHER_HASH)).toBeNull();
-      expect(peekLink(OTHER_HASH)).toBeUndefined();
+      expect(await peekLink(OTHER_HASH)).toBeUndefined();
     });
   });
 }

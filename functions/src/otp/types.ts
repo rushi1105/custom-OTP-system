@@ -101,7 +101,9 @@ export type VerificationFailureReason =
   | 'voided'
   | 'not_found'
   | 'purpose_mismatch'
-  | 'pepper_version_mismatch';
+  | 'pepper_version_mismatch'
+  | 'phone_mismatch'
+  | 'phone_invalid';
 
 export type VerifyOutcome =
   | { readonly outcome: 'verified'; readonly purpose: OtpPurpose }

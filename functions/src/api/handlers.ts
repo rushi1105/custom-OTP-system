@@ -72,6 +72,7 @@ export async function handleVerifyOtp(
     challengeId: payload['challengeId'],
     code: payload['code'],
     purpose: payload['purpose'],
+    phoneRaw: payload['phone'],
     requesterHash: context.requesterHash,
   });
 

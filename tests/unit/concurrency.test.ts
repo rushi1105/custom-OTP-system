@@ -107,6 +107,7 @@ describe('concurrency and rate-limit races', () => {
           challengeId,
           code,
           purpose: 'sign-in',
+          phoneRaw: '+919876543210',
           requesterHash: REQUESTER,
         }),
       ),
@@ -131,6 +132,7 @@ describe('concurrency and rate-limit races', () => {
           challengeId,
           code,
           purpose: 'sign-in',
+          phoneRaw: '+919876543210',
           requesterHash: REQUESTER,
         }),
       ),
@@ -163,6 +165,7 @@ describe('concurrency and rate-limit races', () => {
       challengeId,
       code,
       purpose: 'sign-in',
+      phoneRaw: '+919876543210',
       requesterHash: REQUESTER,
     });
     expect(after).toMatchObject({ outcome: 'invalid', internalReason: 'consumed' });

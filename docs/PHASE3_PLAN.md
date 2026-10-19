@@ -147,14 +147,19 @@ Each subphase ends with checks run, diff reported, and an explicit stop at the d
 
 ### 3.2 — Existing-identity resolution
 
+**Status: IMPLEMENTATION COMPLETE 2026-10-17 — awaiting owner review; not runtime-wired.**
+Phone binding (ID-9), the Firestore identity-store adapter, the shared contract against both
+implementations, F1 closure, F3/F4 audit semantics, and the pepper-rotation documentation are
+implemented and tested. No creation or token issuance was added.
+
 - **Objective/scope:** phone-binding validation in the consuming transaction (ID-9, if
   approved), resolution order (link cache → `getUserByPhoneNumber`), conflict detection,
   cache fill/re-key, no creation.
-- **Files:** `functions/src/otp/engine.ts` (small change: accept `expectedPhoneHash` and
-  validate inside the verify transaction — the only Phase 2 engine change planned),
-  `functions/src/api/handlers.ts` (phone input passthrough), `functions/src/identity/resolver.ts`,
-  `functions/src/identity/firestore-identity-store.ts`, `tests/unit/identity-resolve.test.ts`,
-  engine phone-binding tests.
+- **Files:** `functions/src/otp/engine.ts` (accepts the normalized phone's keyed hash and
+  validates it inside the verify transaction), `functions/src/api/handlers.ts` (phone input
+  passthrough), `functions/src/identity/resolver.ts`,
+  `functions/src/identity/firestore-identity-store.ts`, `functions/src/storage/*`
+  (read primitive + collection), phone-binding/store/resolver tests.
 - **Data changes:** `identity_links` schema per `docs/IDENTITY_DESIGN.md` §8.
 - **Security invariants:** the E.164 used for identity work is admitted only when
   `hashPhone(pepper, e164) === challenge.phoneHash`, validated inside the consuming
@@ -169,20 +174,21 @@ Each subphase ends with checks run, diff reported, and an explicit stop at the d
   at most one success); mismatch audit reason `phone_mismatch`. Plus: existing UID
   resolution; link-miss fallback; pepper-rotation simulation (old-key miss → Auth fallback
   resolves and re-fills); disabled/missing/incomplete-user conflict; uid mismatch conflict.
-- **Carried gates from the Phase 3.1 review (mandatory, documented 2026-10-17):**
-  - **F1 — audit-sink failure semantics:** before identity resolution is wired into runtime
-    composition (3.4), either add local defensive handling that matches the established
-    audit policy or explicitly compose `SafeAuditSink`, and add a test proving that an audit
-    failure cannot turn an otherwise successful resolution into an unexpected request
-    failure. Record the chosen option and evidence; do not mark F1 closed without evidence.
-  - **F3/F4 — audit event semantics:** decide and document the success `reasonCode`
-    convention and omit unnecessary `uid: null` fields rather than expanding audit payloads.
-  - **Pepper-rotation orphan links:** old-pepper-hash `identity_links` documents are re-keyed
-    on next resolution but never cleaned up; document the cleanup approach for 3.2 or a
-    later appropriate phase. No cleanup behavior is introduced in 3.1.
+- **Carried gates from the Phase 3.1 review — status 2026-10-17:**
+  - **F1 — audit-sink failure semantics: CLOSED with evidence.** Chosen option: local
+    defensive handling in `IdentityResolver.recordAudit` (a sink failure is caught and logged
+    as `audit.write_failed`; resolution/conflict results are unaffected). Tests inject a
+    throwing sink and prove a successful resolution and a settled conflict are still returned.
+    This matches the established best-effort audit policy and does not depend on composition.
+  - **F3/F4 — audit event semantics: RESOLVED.** Success events use `reasonCode: null` (engine
+    convention); `uid` is omitted entirely when unknown. Exact-own-property assertions cover
+    both.
+  - **Pepper-rotation orphan links: DOCUMENTED** in `docs/IDENTITY_DESIGN.md` §2.3 (Auth
+    remains authoritative; links re-key on next resolution; old-hash records are stale cache;
+    cleanup requires an operator-reviewed migration in a later operations phase, with
+    acceptance criteria). No cleanup behavior was introduced.
 - **Acceptance:** all resolver and phone-binding tests green; audit events contain no
-  tokens/codes/phones; the carried gates above are either closed with evidence or explicitly
-  scheduled before runtime wiring.
+  tokens/codes/phones; the carried gates above are closed with evidence or scheduled.
 
 ### 3.3 — New-identity creation, idempotency, recovery
 

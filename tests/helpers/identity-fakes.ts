@@ -1,3 +1,4 @@
+import type { AuditSink, NewAuditEvent } from '../../functions/src/audit/audit-log.js';
 import type { IdentityStore } from '../../functions/src/identity/identity-store.js';
 import { IdentityResolver } from '../../functions/src/identity/resolver.js';
 import { IDENTITY_LINK_TTL_SECONDS } from '../../functions/src/identity/policy.js';
@@ -160,6 +161,16 @@ export class FakeAuthPort implements AuthPort {
     }
     this.createTokenCalls.push(uid);
     return `fake-custom-token-for-${uid}`;
+  }
+}
+
+/** Audit sink that always fails; used to prove F1 non-interference. */
+export class ThrowingAuditSink implements AuditSink {
+  readonly attempts: NewAuditEvent[] = [];
+
+  async record(event: NewAuditEvent): Promise<void> {
+    this.attempts.push(event);
+    throw new Error('audit sink unavailable');
   }
 }
 

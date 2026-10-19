@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { IdentityInvariantError } from '../../functions/src/identity/errors';
+import { IdentityResolver } from '../../functions/src/identity/resolver';
 import { hashPhone } from '../../functions/src/otp/hashing';
 import {
   buildIdentityLink,
   createIdentityFixture,
+  ThrowingAuditSink,
   type IdentityFixture,
 } from '../helpers/identity-fakes';
 
@@ -48,10 +50,11 @@ describe('IdentityResolver.resolveExisting — link cache paths', () => {
       uid: 'uid_existing',
       phoneHash,
       outcome: 'success',
-      reasonCode: 'link',
+      reasonCode: null,
       actorHash: REQUESTER,
       purpose: 'sign-in',
     });
+    expect(Object.hasOwn(resolvedEvent ?? {}, 'uid')).toBe(true);
     expect(fixture.logger.entries).toContainEqual({
       level: 'info',
       event: 'identity.resolved',
@@ -105,6 +108,10 @@ describe('IdentityResolver.resolveExisting — link cache paths', () => {
     const result = await resolve(fixture);
 
     expect(result).toEqual({ status: 'conflict', reason: 'conflict_incomplete_link' });
+    const conflict = fixture.audit.events.find((event) => event.type === 'identity.conflict');
+    expect(conflict).toBeDefined();
+    // D-031 ID-7: omit uid entirely when it is not relevant/known.
+    expect(Object.hasOwn(conflict ?? {}, 'uid')).toBe(false);
   });
 
   it('fails closed on a revoked link and never creates a replacement', async () => {
@@ -191,6 +198,11 @@ describe('IdentityResolver.resolveExisting — Auth-authoritative paths', () => 
       'identity.link.filled',
       'identity.resolved',
     ]);
+    for (const event of fixture.audit.events) {
+      // Success events follow the engine convention: reasonCode is reserved
+      // for failures; source/outcome metadata stays in logs, not reasonCode.
+      expect(event.reasonCode).toBeNull();
+    }
   });
 
   it('returns not_found without any writes or audit when Auth has no such phone', async () => {
@@ -328,5 +340,59 @@ describe('IdentityResolver.resolveExisting — failure handling and invariants',
         expect(event.phoneHash).toMatch(/^[0-9a-f]{64}$/);
       }
     }
+  });
+});
+
+describe('audit-failure non-interference (F1)', () => {
+  function resolverWithThrowingAudit(fixture: IdentityFixture): IdentityResolver {
+    return new IdentityResolver({
+      store: fixture.store,
+      auth: fixture.auth,
+      clock: () => fixture.clock.now(),
+      logger: fixture.logger,
+      audit: new ThrowingAuditSink(),
+      pepper: fixture.pepper,
+      pepperVersion: fixture.pepperVersion,
+    });
+  }
+
+  it('still resolves when every audit write fails', async () => {
+    const fixture = createIdentityFixture();
+    fixture.auth.seedUser({ uid: 'uid_auth', phoneNumber: PHONE, disabled: false });
+    const resolver = resolverWithThrowingAudit(fixture);
+
+    const result = await resolver.resolveExisting({
+      e164: PHONE,
+      challengeId: CHALLENGE_ID,
+      purpose: 'sign-in',
+      requesterHash: REQUESTER,
+    });
+
+    expect(result).toEqual({ status: 'resolved', uid: 'uid_auth', source: 'auth' });
+    const warnings = fixture.logger.entries.filter((entry) => entry.event === 'audit.write_failed');
+    expect(warnings).toHaveLength(2);
+    expect(warnings.map((entry) => entry.fields?.['eventType'])).toEqual([
+      'identity.link.filled',
+      'identity.resolved',
+    ]);
+  });
+
+  it('still returns a settled conflict when the audit write fails', async () => {
+    const fixture = createIdentityFixture();
+    const phoneHash = hashPhone(fixture.pepper, PHONE);
+    fixture.store.seedLink(buildIdentityLink({ phoneHash, status: 'revoked', uid: 'uid_revoked' }));
+    const resolver = resolverWithThrowingAudit(fixture);
+
+    const result = await resolver.resolveExisting({
+      e164: PHONE,
+      challengeId: CHALLENGE_ID,
+      purpose: 'sign-in',
+      requesterHash: REQUESTER,
+    });
+
+    expect(result).toEqual({ status: 'conflict', reason: 'conflict_link_revoked' });
+    const warnings = fixture.logger.entries.filter((entry) => entry.event === 'audit.write_failed');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.fields).toMatchObject({ eventType: 'identity.conflict' });
   });
 });

@@ -113,7 +113,7 @@ describe('handleVerifyOtp', () => {
 
     const response = await handleVerifyOtp(
       fixture.engine,
-      { challengeId, code, purpose: 'sign-in' },
+      { challengeId, code, purpose: 'sign-in', phone: REQUEST_PAYLOAD.phone },
       CONTEXT,
     );
 
@@ -127,12 +127,21 @@ describe('handleVerifyOtp', () => {
 
     const errors = await Promise.all([
       captureHttpsError(
-        handleVerifyOtp(fixture.engine, { challengeId, code: wrong, purpose: 'sign-in' }, CONTEXT),
+        handleVerifyOtp(
+          fixture.engine,
+          { challengeId, code: wrong, purpose: 'sign-in', phone: REQUEST_PAYLOAD.phone },
+          CONTEXT,
+        ),
       ),
       captureHttpsError(
         handleVerifyOtp(
           fixture.engine,
-          { challengeId: 'c_AAAAAAAAAAAAAAAAAAAAAA', code, purpose: 'sign-in' },
+          {
+            challengeId: 'c_AAAAAAAAAAAAAAAAAAAAAA',
+            code,
+            purpose: 'sign-in',
+            phone: REQUEST_PAYLOAD.phone,
+          },
           CONTEXT,
         ),
       ),
@@ -145,7 +154,11 @@ describe('handleVerifyOtp', () => {
     }
 
     const malformed = await captureHttpsError(
-      handleVerifyOtp(fixture.engine, { challengeId, code, purpose: 'bogus' }, CONTEXT),
+      handleVerifyOtp(
+        fixture.engine,
+        { challengeId, code, purpose: 'bogus', phone: REQUEST_PAYLOAD.phone },
+        CONTEXT,
+      ),
     );
     expect(malformed.code).toBe('invalid-argument');
     expect(malformed.details).toMatchObject({ code: 'INVALID_REQUEST' });
@@ -158,16 +171,45 @@ describe('handleVerifyOtp', () => {
     const { challengeId, code } = await createdChallenge(fixture);
     const wrong = String((Number(code[0] ?? '0') + 1) % 10) + code.slice(1);
     const first = await captureHttpsError(
-      handleVerifyOtp(fixture.engine, { challengeId, code: wrong, purpose: 'sign-in' }, CONTEXT),
+      handleVerifyOtp(
+        fixture.engine,
+        { challengeId, code: wrong, purpose: 'sign-in', phone: REQUEST_PAYLOAD.phone },
+        CONTEXT,
+      ),
     );
     expect(first.details).toMatchObject({ code: 'CODE_INVALID' });
 
     const error = await captureHttpsError(
-      handleVerifyOtp(fixture.engine, { challengeId, code, purpose: 'sign-in' }, CONTEXT),
+      handleVerifyOtp(
+        fixture.engine,
+        { challengeId, code, purpose: 'sign-in', phone: REQUEST_PAYLOAD.phone },
+        CONTEXT,
+      ),
     );
 
     expect(error.code).toBe('resource-exhausted');
     expect(error.details).toMatchObject({ code: 'RATE_LIMITED' });
+  });
+
+  it('requires the phone argument and maps unusable phones to CODE_INVALID', async () => {
+    const fixture = createEngineFixture();
+    const { challengeId, code } = await createdChallenge(fixture);
+
+    for (const phone of [undefined, null, 'not-a-phone', '9'.repeat(10_000), 42]) {
+      const error = await captureHttpsError(
+        handleVerifyOtp(fixture.engine, { challengeId, code, purpose: 'sign-in', phone }, CONTEXT),
+      );
+      expect(error.code).toBe('permission-denied');
+      expect(error.details).toEqual({ code: 'CODE_INVALID' });
+      expect(error.message).not.toMatch(/phone|identity|account/i);
+    }
+
+    const verified = await handleVerifyOtp(
+      fixture.engine,
+      { challengeId, code, purpose: 'sign-in', phone: REQUEST_PAYLOAD.phone },
+      CONTEXT,
+    );
+    expect(verified).toEqual({ verified: true, purpose: 'sign-in' });
   });
 });
 
@@ -186,14 +228,24 @@ describe('input bounds', () => {
       captureHttpsError(
         handleVerifyOtp(
           fixture.engine,
-          { challengeId: `c_${'A'.repeat(100_000)}`, code: '123456', purpose: 'sign-in' },
+          {
+            challengeId: `c_${'A'.repeat(100_000)}`,
+            code: '123456',
+            purpose: 'sign-in',
+            phone: REQUEST_PAYLOAD.phone,
+          },
           CONTEXT,
         ),
       ),
       captureHttpsError(
         handleVerifyOtp(
           fixture.engine,
-          { challengeId: 'c_AAAAAAAAAAAAAAAAAAAAAA', code: oversizedDigits, purpose: 'sign-in' },
+          {
+            challengeId: 'c_AAAAAAAAAAAAAAAAAAAAAA',
+            code: oversizedDigits,
+            purpose: 'sign-in',
+            phone: REQUEST_PAYLOAD.phone,
+          },
           CONTEXT,
         ),
       ),

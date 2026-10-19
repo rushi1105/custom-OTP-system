@@ -65,13 +65,23 @@ Delivery failure semantics: on any non-accepted provider outcome the challenge i
 and the phone cooldown is cleared so the client may retry immediately (server-side limits
 still apply). A `pending` challenge never became verifiable because of a failed send.
 
-## 3. `verifyOtp` (callable) — Implemented (Phase 2)
+## 3. `verifyOtp` (callable) — Implemented (Phase 2; phone binding added in Phase 3.2)
 
 Input:
 
 ```json
-{ "challengeId": "c_<opaque>", "code": "123456", "purpose": "sign-in" }
+{
+  "challengeId": "c_<opaque>",
+  "code": "123456",
+  "purpose": "sign-in",
+  "phone": "+919876543210"
+}
 ```
+
+`phone` is **required** (ID-9): it is normalized with the canonical E.164 policy and admitted
+only when its keyed hash equals the challenge's stored `phoneHash`. The comparison happens
+inside the same transaction that consumes the challenge. The phone is a locator for the
+already-created challenge, never an identity input.
 
 Success response:
 
@@ -79,21 +89,25 @@ Success response:
 { "verified": true, "purpose": "sign-in" }
 ```
 
-`customToken` is intentionally absent — it arrives with Phase 3 after identity resolution
-is implemented and tested.
+`customToken` is intentionally absent — it arrives in Phase 3.4 after identity resolution is
+implemented and tested.
 
 Errors:
 
-| Condition                                                                                           | status               | details.code      | Notes                          |
-| --------------------------------------------------------------------------------------------------- | -------------------- | ----------------- | ------------------------------ |
-| Malformed input (bad id/code format, unknown purpose)                                               | `invalid-argument`   | `INVALID_REQUEST` | —                              |
-| Wrong code, expired, locked, consumed, voided, unknown challenge, purpose mismatch, pepper rotation | `permission-denied`  | `CODE_INVALID`    | Deliberately indistinguishable |
-| Verify rate limit                                                                                   | `resource-exhausted` | `RATE_LIMITED`    | `retryAfterSeconds`            |
+| Condition                                                                                           | status               | details.code      | Notes                                                             |
+| --------------------------------------------------------------------------------------------------- | -------------------- | ----------------- | ----------------------------------------------------------------- |
+| Malformed input (bad id/code format, unknown purpose)                                               | `invalid-argument`   | `INVALID_REQUEST` | —                                                                 |
+| Wrong code, expired, locked, consumed, voided, unknown challenge, purpose mismatch, pepper rotation | `permission-denied`  | `CODE_INVALID`    | Deliberately indistinguishable                                    |
+| Missing/malformed/oversized phone, phone mismatch (correct challenge otherwise)                     | `permission-denied`  | `CODE_INVALID`    | Challenge not consumed; attempts not incremented; no state change |
+| Verify rate limit                                                                                   | `resource-exhausted` | `RATE_LIMITED`    | `retryAfterSeconds`                                               |
 
 Rules (implemented and tested):
 
 - Consumption is atomic; of N concurrent correct submissions exactly one succeeds
   (verified against the Firestore emulator with 10 concurrent requests).
+- Phone binding is validated before any write: a phone mismatch or unusable phone leaves the
+  challenge (`pending`, attempts unchanged) and the requester verify window unchanged. It is
+  not counted against the per-requester verify limit (it is not a code-guessing attempt).
 - Attempt limit is 5 failed verifications per challenge; the correct code is rejected after
   a lock.
 - Resending voids a previous pending challenge for the same phone (superseded), so only one
