@@ -30,3 +30,24 @@ export class IdentityInvariantError extends Error {
 export function isIdentityConflict(reason: IdentityFailureReason): boolean {
   return reason.startsWith('conflict_');
 }
+
+/**
+ * Typed Auth-port failures. Only the provider error code is retained — never
+ * the provider payload — so raw phone numbers or provider internals cannot leak
+ * through error messages or logs.
+ */
+export class AuthPortError extends Error {
+  readonly authErrorCode: string | null;
+
+  constructor(message: string, authErrorCode: string | null) {
+    super(message);
+    this.name = new.target.name;
+    this.authErrorCode = authErrorCode;
+  }
+}
+
+export class AuthPhoneAlreadyExistsError extends AuthPortError {}
+
+export class AuthInvalidPhoneError extends AuthPortError {}
+
+export class AuthUnavailableError extends AuthPortError {}

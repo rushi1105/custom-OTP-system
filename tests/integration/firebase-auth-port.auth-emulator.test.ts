@@ -2,6 +2,12 @@ import { deleteApp, initializeApp, type App } from 'firebase-admin/app';
 import { getAuth, type Auth } from 'firebase-admin/auth';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { FirebaseAuthPort } from '../../functions/src/auth/firebase-auth-port';
+import {
+  AuthInvalidPhoneError,
+  AuthPhoneAlreadyExistsError,
+} from '../../functions/src/identity/errors';
+
 /**
  * Phase 3.3a â€” empirical validation of Firebase Auth emulator behavior that the
  * approved identity-creation design depends on. This is deliberately a
@@ -137,5 +143,82 @@ describe.skipIf(!AUTH_EMULATOR_HOST)('Firebase Auth emulator assumptions (Phase 
   it('rejects an invalid phone with a reliable error code', async () => {
     const code = await captureErrorCode(auth.createUser({ phoneNumber: 'not-a-phone' }));
     expect(code).toBe('auth/invalid-phone-number');
+  });
+
+  describe('FirebaseAuthPort mapping against the emulator', () => {
+    let port: FirebaseAuthPort;
+
+    beforeAll(() => {
+      port = new FirebaseAuthPort(auth);
+    });
+
+    it('returns null for unknown UID and phone lookups', async () => {
+      await expect(port.getUser('missing-uid')).resolves.toBeNull();
+      await expect(port.getUserByPhoneNumber('+919876540011')).resolves.toBeNull();
+    });
+
+    it('looks up created users and preserves disabled state', async () => {
+      const phone = '+919876540012';
+      const created = await auth.createUser({ phoneNumber: phone });
+      const expected = { uid: created.uid, phoneNumber: phone, disabled: false };
+
+      await expect(port.getUser(created.uid)).resolves.toEqual(expected);
+      await expect(port.getUserByPhoneNumber(phone)).resolves.toEqual(expected);
+
+      await auth.updateUser(created.uid, { disabled: true });
+      await expect(port.getUser(created.uid)).resolves.toMatchObject({
+        uid: created.uid,
+        disabled: true,
+      });
+      await expect(port.getUserByPhoneNumber(phone)).resolves.toMatchObject({
+        uid: created.uid,
+        disabled: true,
+      });
+    });
+
+    it('creates a user through the adapter and resolves it by phone', async () => {
+      const phone = '+919876540013';
+      const created = await port.createUserWithPhone(phone);
+
+      expect(created).toEqual({ uid: expect.any(String), phoneNumber: phone, disabled: false });
+      await expect(port.getUserByPhoneNumber(phone)).resolves.toEqual(created);
+    });
+
+    it('maps duplicate phone to the typed error with the observed code', async () => {
+      const phone = '+919876540014';
+      await port.createUserWithPhone(phone);
+
+      const error = await port.createUserWithPhone(phone).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(AuthPhoneAlreadyExistsError);
+      expect((error as { authErrorCode?: string | null }).authErrorCode).toBe(
+        DUPLICATE_PHONE_ERROR_CODE,
+      );
+    });
+
+    it('maps invalid phone creation to AuthInvalidPhoneError', async () => {
+      const error = await port
+        .createUserWithPhone('not-a-phone')
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(AuthInvalidPhoneError);
+    });
+
+    it('maps invalid phone lookups to AuthInvalidPhoneError', async () => {
+      const error = await port
+        .getUserByPhoneNumber('not-a-phone')
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(AuthInvalidPhoneError);
+    });
+
+    it('maps deleted users back to null on both lookups', async () => {
+      const phone = '+919876540015';
+      const created = await port.createUserWithPhone(phone);
+      await auth.deleteUser(created.uid);
+
+      await expect(port.getUser(created.uid)).resolves.toBeNull();
+      await expect(port.getUserByPhoneNumber(phone)).resolves.toBeNull();
+    });
   });
 });

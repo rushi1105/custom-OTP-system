@@ -3,6 +3,10 @@ import { isPendingCreationClaimActive } from '../../functions/src/identity/claim
 import type { IdentityStore } from '../../functions/src/identity/identity-store.js';
 import { IdentityResolver } from '../../functions/src/identity/resolver.js';
 import { IDENTITY_LINK_TTL_SECONDS } from '../../functions/src/identity/policy.js';
+import {
+  AuthPhoneAlreadyExistsError,
+  AuthUnavailableError,
+} from '../../functions/src/identity/errors.js';
 import type { IdentityFailureReason } from '../../functions/src/identity/errors.js';
 import type {
   AcquireCreationClaimInput,
@@ -209,11 +213,9 @@ export class FakeAuthPort implements AuthPort {
   private readonly usersByPhone = new Map<string, string>();
   private sequence = 0;
 
-  readonly createTokenCalls: string[] = [];
   failGetUser = false;
   failGetUserByPhoneNumber = false;
   failCreateUser = false;
-  failCreateCustomToken = false;
 
   seedUser(user: AuthUserRecord): void {
     this.usersByUid.set(user.uid, { ...user });
@@ -244,10 +246,13 @@ export class FakeAuthPort implements AuthPort {
 
   async createUserWithPhone(e164: string): Promise<AuthUserRecord> {
     if (this.failCreateUser) {
-      throw new Error('auth unavailable');
+      throw new AuthUnavailableError('auth unavailable', 'auth/internal-error');
     }
     if (this.usersByPhone.has(e164)) {
-      throw new Error('auth/phone-already-exists');
+      throw new AuthPhoneAlreadyExistsError(
+        'phone already registered',
+        'auth/phone-number-already-exists',
+      );
     }
     this.sequence += 1;
     const user: AuthUserRecord = {
@@ -257,14 +262,6 @@ export class FakeAuthPort implements AuthPort {
     };
     this.seedUser(user);
     return { ...user };
-  }
-
-  async createCustomToken(uid: string): Promise<string> {
-    if (this.failCreateCustomToken) {
-      throw new Error('auth unavailable');
-    }
-    this.createTokenCalls.push(uid);
-    return `fake-custom-token-for-${uid}`;
   }
 }
 

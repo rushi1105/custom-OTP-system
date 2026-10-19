@@ -30,14 +30,16 @@ export interface AuthUserRecord {
 
 /**
  * Provider-agnostic Auth port. Implementations live outside the domain layer
- * (Firebase adapter in subphase 3.2+; fakes in tests). No Firebase imports may
+ * (Firebase adapter in subphase 3.3c; fakes in tests). No Firebase imports may
  * appear in `functions/src/identity/**` (enforced by a static test).
+ *
+ * Token minting is intentionally absent: it belongs to subphase 3.4 and must
+ * not exist in the identity domain or the Auth adapter before then.
  */
 export interface AuthPort {
   getUser(uid: string): Promise<AuthUserRecord | null>;
   getUserByPhoneNumber(e164: string): Promise<AuthUserRecord | null>;
   createUserWithPhone(e164: string): Promise<AuthUserRecord>;
-  createCustomToken(uid: string): Promise<string>;
 }
 
 export interface ResolveExistingIdentityInput {
