@@ -195,14 +195,22 @@ implemented and tested. No creation or token issuance was added.
 - **Objective/scope:** creation policy (per ID-1, approved basis), claim protocol with
   `IDENTITY_CLAIM_TTL_SECONDS = 120` and bounded non-holder retry (3 attempts, 150 ms),
   `createUser({ phoneNumber })` (per ID-2), partial-failure recovery.
+- **Phase 3.3a evidence (2026-10-19):** the Auth emulator confirms one-user-per-phone on
+  create, concurrent duplicate create, and update paths with
+  `auth/phone-number-already-exists`; disabled users remain discoverable by phone
+  (`disabled: true`); deleted users resolve as `auth/user-not-found`. Tests:
+  `tests/integration/firebase-auth-port.auth-emulator.test.ts`.
 - **Files:** `functions/src/identity/creation.ts` (or resolver extension), tests
   `tests/unit/identity-creation.test.ts`, emulator `tests/integration/identity-store.firestore.test.ts`.
 - **Security invariants:** creation only after consumed `sign-in` challenge + double
   user-not-found; single creator per phone via claim transaction; never delete Auth users;
-  `phone-already-exists` → recover-or-fail-closed.
+  `auth/phone-number-already-exists` → recover-or-fail-closed. This literal is
+  **Auth-emulator evidence (2026-10-19)** and must be re-checked against the isolated test
+  project in Phase 3.7.
 - **Tests:** create-once; concurrent first-time resolution (Promise.all, in-memory +
   Firestore emulator with fake Auth); crash between create and finalize → recovery via Auth
-  lookup; stale claim reclaim; `phone-already-exists` race; failure-injection via a
+  lookup; stale claim reclaim; `auth/phone-number-already-exists` race (emulator-observed
+  2026-10-19; re-check in 3.7); failure-injection via a
   throwing store/auth double.
 - **Acceptance:** all creation/recovery tests green; exactly one Auth user per phone under
   contention.

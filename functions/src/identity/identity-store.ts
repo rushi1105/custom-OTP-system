@@ -1,11 +1,29 @@
-import type { IdentityLinkFillResult, IdentityLinkRecord } from './types.js';
+import type {
+  AcquireCreationClaimInput,
+  ClaimAcquisitionResult,
+  ClaimFinalizationResult,
+  ClaimReleaseResult,
+  FinalizeCreationClaimInput,
+  IdentityLinkFillResult,
+  IdentityLinkRecord,
+  ReleaseCreationClaimInput,
+} from './types.js';
 
 /**
- * Persistence port for identity-link records. The Firestore adapter is added
- * in subphase 3.2; subphase 3.1 ships only this contract plus an in-memory test
- * implementation. `fillActiveLink` must be transactional and guarded: it may
- * create or refresh an active link for the given UID but must never re-point,
- * revoke, or take over an existing record.
+ * Persistence port for identity-link records.
+ *
+ * `fillActiveLink` must be transactional and guarded: it may create or refresh
+ * an active link for the given UID but must never re-point, revoke, or take
+ * over an existing record.
+ *
+ * Creation-claim operations implement docs/IDENTITY_DESIGN.md §4.3:
+ * - acquire: create a claim on an absent record, reclaim only an expired claim,
+ *   report an unexpired claim as in-progress, and never mutate active/revoked/
+ *   corrupt records;
+ * - finalize: transition the caller's own pending claim to an active link,
+ *   guarded by claim id (never another claimant's record);
+ * - release: delete the caller's own pending claim only (best-effort recovery
+ *   after a failed creation attempt).
  */
 export interface IdentityStore {
   getLink(phoneHash: string): Promise<IdentityLinkRecord | null>;
@@ -17,4 +35,10 @@ export interface IdentityStore {
     readonly pepperVersion: number;
     readonly nowMs: number;
   }): Promise<IdentityLinkFillResult>;
+
+  acquireCreationClaim(input: AcquireCreationClaimInput): Promise<ClaimAcquisitionResult>;
+
+  finalizeCreationClaim(input: FinalizeCreationClaimInput): Promise<ClaimFinalizationResult>;
+
+  releaseCreationClaim(input: ReleaseCreationClaimInput): Promise<ClaimReleaseResult>;
 }

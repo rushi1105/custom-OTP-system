@@ -123,5 +123,70 @@ describe.skipIf(!process.env['FIRESTORE_EMULATOR_HOST'])(
       const snapshot = await firestore.collection(COLLECTIONS.identityLinks).doc(phoneHash).get();
       expect(snapshot.data()).toMatchObject({ status: 'revoked', uid: 'uid_old' });
     });
+
+    it('serializes five concurrent claim acquisitions to one holder', async () => {
+      const store = new FirestoreIdentityStore(database);
+      const phoneHash = 'f'.repeat(64);
+
+      const results = await Promise.all(
+        Array.from({ length: 5 }, (_, index) =>
+          store.acquireCreationClaim({
+            phoneHash,
+            claimId: `claim_${String(index)}`,
+            nowMs: NOW_MS,
+            claimExpiresAtMs: NOW_MS + 120_000,
+            pepperVersion: 1,
+          }),
+        ),
+      );
+
+      expect(results.filter((result) => result.outcome === 'acquired')).toHaveLength(1);
+      expect(results.filter((result) => result.outcome === 'in_progress')).toHaveLength(4);
+      const winnerIndex = results.findIndex((result) => result.outcome === 'acquired');
+      const stored = await store.getLink(phoneHash);
+      expect(stored?.status).toBe('pending_creation');
+      expect(stored?.claimId).toBe(`claim_${String(winnerIndex)}`);
+    });
+
+    it('serializes concurrent takeovers of an expired claim', async () => {
+      const store = new FirestoreIdentityStore(database);
+      const phoneHash = 'g'.repeat(64);
+      await firestore
+        .collection(COLLECTIONS.identityLinks)
+        .doc(phoneHash)
+        .set(
+          buildIdentityLink({
+            phoneHash,
+            status: 'pending_creation',
+            uid: null,
+            claimId: 'claim-old',
+            claimedAtMs: NOW_MS - 240_000,
+            claimExpiresAtMs: NOW_MS - 120_000,
+          }),
+        );
+
+      const results = await Promise.all([
+        store.acquireCreationClaim({
+          phoneHash,
+          claimId: 'claim-a',
+          nowMs: NOW_MS,
+          claimExpiresAtMs: NOW_MS + 120_000,
+          pepperVersion: 1,
+        }),
+        store.acquireCreationClaim({
+          phoneHash,
+          claimId: 'claim-b',
+          nowMs: NOW_MS,
+          claimExpiresAtMs: NOW_MS + 120_000,
+          pepperVersion: 1,
+        }),
+      ]);
+
+      expect(results.filter((result) => result.outcome === 'reacquired')).toHaveLength(1);
+      expect(results.filter((result) => result.outcome === 'in_progress')).toHaveLength(1);
+      const stored = await store.getLink(phoneHash);
+      expect(['claim-a', 'claim-b']).toContain(stored?.claimId);
+      expect(stored?.claimId).not.toBe('claim-old');
+    });
   },
 );

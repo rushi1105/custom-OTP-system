@@ -27,6 +27,9 @@ export class FirestoreDocumentDatabase implements DocumentDatabase {
           write: <R>(ref: DocumentRef, data: R): void => {
             transaction.set(this.document(ref), toPersistedData(data));
           },
+          delete: (ref: DocumentRef): void => {
+            transaction.delete(this.document(ref));
+          },
         });
       },
       { maxAttempts: 20 },

@@ -143,7 +143,9 @@ fields; Firebase assigns the UID.
 
 ### 4.2 Duplicate-phone recovery and idempotent retries (ID-1)
 
-- `createUser` fails with `auth/phone-already-exists` → re-run `getUserByPhoneNumber`:
+- `createUser` fails with `auth/phone-number-already-exists` — **emulator-observed
+  2026-10-19**; the isolated test project in Phase 3.7 must re-check the production code
+  because this differs from the commonly referenced `auth/phone-already-exists` — → re-run `getUserByPhoneNumber`:
   - found → finalize the link to that UID and proceed (this is the race-recovery path,
     including a concurrent creator that finished first);
   - still not found → fail closed `identity.conflict` (audit reason
@@ -330,7 +332,7 @@ remains Phase 5/compliance work.
 | Claim in progress (< TTL)                         | Bounded retry; then `IDENTITY_UNAVAILABLE`                                                              |
 | Claim expired                                     | Re-check Auth; finalize if found; else reclaim and create                                               |
 | Creation succeeded, finalize failed               | `IDENTITY_UNAVAILABLE`; next resolution recovers via Auth; user never deleted                           |
-| `phone-already-exists` during create              | Re-check Auth; finalize if found; else `IDENTITY_UNAVAILABLE`                                           |
+| `phone-number-already-exists` during create       | Re-check Auth; finalize if found; else `IDENTITY_UNAVAILABLE` (emulator code; re-check in 3.7)          |
 | Token minting throws                              | `IDENTITY_UNAVAILABLE`; audit `token.issue_failed`; challenge stays consumed                            |
 | Firestore unavailable during claim/finalize       | `IDENTITY_UNAVAILABLE`; audit best-effort                                                               |
 | Any post-consumption failure                      | Fresh OTP required; no exactly-once promise                                                             |

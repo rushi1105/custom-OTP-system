@@ -33,6 +33,7 @@ export class InMemoryDocumentDatabase implements DocumentDatabase {
     for (let attempt = 0; attempt < this.maxTransactionAttempts; attempt += 1) {
       const readVersions = new Map<string, number>();
       const pendingWrites = new Map<string, unknown>();
+      const pendingDeletes = new Set<string>();
 
       const tx: TransactionContext = {
         read: async <R>(ref: DocumentRef): Promise<{ data: R; version: number } | null> => {
@@ -44,7 +45,14 @@ export class InMemoryDocumentDatabase implements DocumentDatabase {
             : { data: current.data as R, version: current.version };
         },
         write: <R>(ref: DocumentRef, data: R): void => {
-          pendingWrites.set(storageKey(ref), data);
+          const key = storageKey(ref);
+          pendingDeletes.delete(key);
+          pendingWrites.set(key, data);
+        },
+        delete: (ref: DocumentRef): void => {
+          const key = storageKey(ref);
+          pendingWrites.delete(key);
+          pendingDeletes.add(key);
         },
       };
 
@@ -63,6 +71,9 @@ export class InMemoryDocumentDatabase implements DocumentDatabase {
         for (const [key, data] of pendingWrites) {
           const current = this.entries.get(key);
           this.entries.set(key, { data, version: (current?.version ?? -1) + 1 });
+        }
+        for (const key of pendingDeletes) {
+          this.entries.delete(key);
         }
         return result;
       }

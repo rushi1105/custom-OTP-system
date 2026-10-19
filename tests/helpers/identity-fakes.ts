@@ -1,13 +1,20 @@
 import type { AuditSink, NewAuditEvent } from '../../functions/src/audit/audit-log.js';
+import { isPendingCreationClaimActive } from '../../functions/src/identity/claims.js';
 import type { IdentityStore } from '../../functions/src/identity/identity-store.js';
 import { IdentityResolver } from '../../functions/src/identity/resolver.js';
 import { IDENTITY_LINK_TTL_SECONDS } from '../../functions/src/identity/policy.js';
 import type { IdentityFailureReason } from '../../functions/src/identity/errors.js';
 import type {
+  AcquireCreationClaimInput,
   AuthPort,
   AuthUserRecord,
+  ClaimAcquisitionResult,
+  ClaimFinalizationResult,
+  ClaimReleaseResult,
+  FinalizeCreationClaimInput,
   IdentityLinkFillResult,
   IdentityLinkRecord,
+  ReleaseCreationClaimInput,
 } from '../../functions/src/identity/types.js';
 import { FixedClock } from './fixed-clock.js';
 import { RecordingAuditSink } from './recording-audit-sink.js';
@@ -96,6 +103,103 @@ export class InMemoryIdentityStore implements IdentityStore {
   peekLink(phoneHash: string): IdentityLinkRecord | undefined {
     const record = this.links.get(phoneHash);
     return record === undefined ? undefined : { ...record };
+  }
+
+  async acquireCreationClaim(input: AcquireCreationClaimInput): Promise<ClaimAcquisitionResult> {
+    const nowIso = new Date(input.nowMs).toISOString();
+    const existing = this.links.get(input.phoneHash);
+    if (existing === undefined) {
+      this.links.set(input.phoneHash, {
+        phoneHash: input.phoneHash,
+        status: 'pending_creation',
+        uid: null,
+        claimId: input.claimId,
+        claimedAtMs: input.nowMs,
+        claimExpiresAtMs: input.claimExpiresAtMs,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        verifiedAt: null,
+        lastChallengeId: null,
+        pepperVersion: input.pepperVersion,
+        ttlAtMs: input.nowMs + IDENTITY_LINK_TTL_SECONDS * 1000,
+      });
+      return { outcome: 'acquired' };
+    }
+    if (existing.status === 'revoked') {
+      return { outcome: 'blocked', reason: 'conflict_link_revoked' };
+    }
+    if (existing.status === 'active') {
+      if (existing.uid === null) {
+        return { outcome: 'blocked', reason: 'conflict_incomplete_link' };
+      }
+      return { outcome: 'active', uid: existing.uid };
+    }
+    if (existing.claimId === null) {
+      return { outcome: 'blocked', reason: 'conflict_incomplete_link' };
+    }
+    if (isPendingCreationClaimActive(existing, input.nowMs)) {
+      return { outcome: 'in_progress' };
+    }
+    this.links.set(input.phoneHash, {
+      ...existing,
+      claimId: input.claimId,
+      claimedAtMs: input.nowMs,
+      claimExpiresAtMs: input.claimExpiresAtMs,
+      updatedAt: nowIso,
+      pepperVersion: input.pepperVersion,
+    });
+    return { outcome: 'reacquired' };
+  }
+
+  async finalizeCreationClaim(input: FinalizeCreationClaimInput): Promise<ClaimFinalizationResult> {
+    const existing = this.links.get(input.phoneHash);
+    if (existing === undefined) {
+      return { outcome: 'claim_lost' };
+    }
+    if (existing.status === 'active') {
+      return existing.uid === input.uid
+        ? { outcome: 'finalized' }
+        : { outcome: 'blocked', reason: 'conflict_uid_mismatch' };
+    }
+    if (existing.status === 'revoked') {
+      return { outcome: 'blocked', reason: 'conflict_link_revoked' };
+    }
+    if (existing.claimId === null) {
+      return { outcome: 'blocked', reason: 'conflict_incomplete_link' };
+    }
+    if (existing.claimId !== input.claimId) {
+      return { outcome: 'claim_lost' };
+    }
+    const nowIso = new Date(input.nowMs).toISOString();
+    this.links.set(input.phoneHash, {
+      ...existing,
+      status: 'active',
+      uid: input.uid,
+      claimId: null,
+      claimedAtMs: null,
+      claimExpiresAtMs: null,
+      updatedAt: nowIso,
+      verifiedAt: nowIso,
+      lastChallengeId: input.challengeId,
+      pepperVersion: input.pepperVersion,
+    });
+    return { outcome: 'finalized' };
+  }
+
+  async releaseCreationClaim(input: ReleaseCreationClaimInput): Promise<ClaimReleaseResult> {
+    const existing = this.links.get(input.phoneHash);
+    if (existing === undefined) {
+      return { outcome: 'no_claim' };
+    }
+    if (
+      existing.status !== 'pending_creation' ||
+      existing.claimId === null ||
+      existing.claimId !== input.claimId
+    ) {
+      return { outcome: 'not_owner' };
+    }
+    this.links.delete(input.phoneHash);
+    return { outcome: 'released' };
   }
 }
 

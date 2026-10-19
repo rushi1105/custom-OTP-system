@@ -15,6 +15,7 @@ export interface StoredDocument<T> {
 export interface TransactionContext {
   read<T>(ref: DocumentRef): Promise<StoredDocument<T> | null>;
   write<T>(ref: DocumentRef, data: T): void;
+  delete(ref: DocumentRef): void;
 }
 
 export interface DocumentDatabase {

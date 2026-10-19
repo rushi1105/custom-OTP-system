@@ -63,3 +63,51 @@ export type IdentityLinkFillResult =
   | { readonly outcome: 'filled' }
   | { readonly outcome: 'refreshed' }
   | { readonly outcome: 'conflict'; readonly reason: IdentityFailureReason };
+
+export interface AcquireCreationClaimInput {
+  readonly phoneHash: string;
+  readonly claimId: string;
+  readonly nowMs: number;
+  readonly claimExpiresAtMs: number;
+  readonly pepperVersion: number;
+}
+
+export type ClaimAcquisitionResult =
+  /** Claim created on an absent record. */
+  | { readonly outcome: 'acquired' }
+  /** Expired claim replaced by this claimant (caller must re-check Auth first). */
+  | { readonly outcome: 'reacquired' }
+  /** Another unexpired claim is held; caller retries within its budget. */
+  | { readonly outcome: 'in_progress' }
+  /** The link is already active; resolve instead of creating. */
+  | { readonly outcome: 'active'; readonly uid: string }
+  /** Revoked or corrupt record; fail closed without mutation. */
+  | { readonly outcome: 'blocked'; readonly reason: IdentityFailureReason };
+
+export interface FinalizeCreationClaimInput {
+  readonly phoneHash: string;
+  readonly claimId: string;
+  readonly uid: string;
+  readonly challengeId: string;
+  readonly pepperVersion: number;
+  readonly nowMs: number;
+}
+
+export type ClaimFinalizationResult =
+  | { readonly outcome: 'finalized' }
+  /** The claim is absent, or was taken over by another claimant. */
+  | { readonly outcome: 'claim_lost' }
+  /** The record is revoked/corrupt or active for a different UID. */
+  | { readonly outcome: 'blocked'; readonly reason: IdentityFailureReason };
+
+export interface ReleaseCreationClaimInput {
+  readonly phoneHash: string;
+  readonly claimId: string;
+}
+
+export type ClaimReleaseResult =
+  | { readonly outcome: 'released' }
+  /** The record exists but is not this claimant's pending claim. */
+  | { readonly outcome: 'not_owner' }
+  /** No record exists for this phone hash. */
+  | { readonly outcome: 'no_claim' };
