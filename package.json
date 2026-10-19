@@ -20,7 +20,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:integration": "firebase emulators:exec --only firestore --project demo-otp-infrastructure-service \"vitest run --config vitest.integration.mts\"",
+    "test:integration": "firebase emulators:exec --only firestore,auth --project demo-otp-infrastructure-service \"vitest run --config vitest.integration.mts\"",
     "emulators": "firebase emulators:start --project demo-otp-infrastructure-service",
     "clean": "npm run clean --workspaces --if-present"
   },
