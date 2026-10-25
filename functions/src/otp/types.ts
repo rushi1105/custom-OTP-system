@@ -106,7 +106,14 @@ export type VerificationFailureReason =
   | 'phone_invalid';
 
 export type VerifyOutcome =
-  | { readonly outcome: 'verified'; readonly purpose: OtpPurpose }
+  | {
+      readonly outcome: 'verified';
+      readonly purpose: OtpPurpose;
+      /** Canonical phone admitted only after in-transaction ID-9 binding. */
+      readonly e164: string;
+      readonly phoneHash: string;
+      readonly challengeId: string;
+    }
   | {
       readonly outcome: 'invalid';
       readonly internalReason: VerificationFailureReason;

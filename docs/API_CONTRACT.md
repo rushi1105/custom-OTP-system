@@ -2,8 +2,10 @@
 
 **Status:** `GET` health is **Confirmed** (Phase 1). `requestOtp` and `verifyOtp` are
 **Implemented in Phase 2** as Firebase callable functions (v2, region `asia-south1`).
-Relay endpoints remain **Proposed** (Phase 4). Custom-token issuance is **not implemented**
-(Phase 3).
+Relay endpoints remain **Proposed** (Phase 4). Custom-token issuance and identity
+resolution are **implemented in Phase 3.4**; the client-SDK exchange boundary is exercised in
+the Phase 3.5 emulator harness. Profile/role data remains CoolBus-owned and out of scope in
+this repository.
 
 Callable protocol: requests carry `{"data": {...}}`; successful responses carry
 `{"result": {...}}`; errors carry `{"error": {"message", "status", "details"}}` where
@@ -43,8 +45,8 @@ Input:
 ```
 
 - `phone`: required; normalized server-side (E.164; Indian local formats accepted).
-- `purpose`: required; one of `sign-in`, `phone-verification` (bound into the challenge and
-  code hash).
+- `purpose`: required; Phase 3 accepts only `sign-in`. `phone-verification` remains reserved
+  and is rejected at the API boundary with `INVALID_REQUEST` (D-028/ID-6).
 
 Success response:
 
@@ -86,20 +88,23 @@ already-created challenge, never an identity input.
 Success response:
 
 ```json
-{ "verified": true, "purpose": "sign-in" }
+{ "verified": true, "purpose": "sign-in", "customToken": "<firebase-custom-token>" }
 ```
 
-`customToken` is intentionally absent — it arrives in Phase 3.4 after identity resolution is
-implemented and tested.
+The response contains no UID, profile data, or phone echo. The custom token exists only in
+the callable response and handler memory; it is never logged, audited, or persisted. The
+client must call `signInWithCustomToken` immediately and must not persist the token. No
+custom claims are added.
 
 Errors:
 
-| Condition                                                                                           | status               | details.code      | Notes                                                             |
-| --------------------------------------------------------------------------------------------------- | -------------------- | ----------------- | ----------------------------------------------------------------- |
-| Malformed input (bad id/code format, unknown purpose)                                               | `invalid-argument`   | `INVALID_REQUEST` | —                                                                 |
-| Wrong code, expired, locked, consumed, voided, unknown challenge, purpose mismatch, pepper rotation | `permission-denied`  | `CODE_INVALID`    | Deliberately indistinguishable                                    |
-| Missing/malformed/oversized phone, phone mismatch (correct challenge otherwise)                     | `permission-denied`  | `CODE_INVALID`    | Challenge not consumed; attempts not incremented; no state change |
-| Verify rate limit                                                                                   | `resource-exhausted` | `RATE_LIMITED`    | `retryAfterSeconds`                                               |
+| Condition                                                                                           | status               | details.code           | Notes                                                             |
+| --------------------------------------------------------------------------------------------------- | -------------------- | ---------------------- | ----------------------------------------------------------------- |
+| Malformed input (bad id/code format, unknown purpose)                                               | `invalid-argument`   | `INVALID_REQUEST`      | —                                                                 |
+| Wrong code, expired, locked, consumed, voided, unknown challenge, purpose mismatch, pepper rotation | `permission-denied`  | `CODE_INVALID`         | Deliberately indistinguishable                                    |
+| Missing/malformed/oversized phone, phone mismatch (correct challenge otherwise)                     | `permission-denied`  | `CODE_INVALID`         | Challenge not consumed; attempts not incremented; no state change |
+| Verify rate limit                                                                                   | `resource-exhausted` | `RATE_LIMITED`         | `retryAfterSeconds`                                               |
+| Identity conflict/outage or custom-token failure after consumption                                  | `unavailable`        | `IDENTITY_UNAVAILABLE` | Challenge remains consumed; no token; request a fresh OTP         |
 
 Rules (implemented and tested):
 
@@ -113,6 +118,8 @@ Rules (implemented and tested):
 - Resending voids a previous pending challenge for the same phone (superseded), so only one
   challenge is live per phone.
 - Replay after success, after expiry, or after voiding is rejected.
+- Consume-first semantics: after a successful code verification, any later identity or
+  token failure requires a fresh OTP. No exactly-once promise spans Auth and Firestore.
 
 ## 4. Relay endpoints — Proposed (Phase 4)
 
@@ -121,14 +128,15 @@ reporting (idempotent), heartbeat. To be finalized with the relay implementation
 
 ## 5. Error code taxonomy (implemented subset)
 
-| Code                  | Meaning                                                                                      |
-| --------------------- | -------------------------------------------------------------------------------------------- |
-| `INVALID_REQUEST`     | Malformed or unsupported input                                                               |
-| `CODE_INVALID`        | Generic verification failure (wrong/expired/consumed/locked/voided/unknown/purpose mismatch) |
-| `RATE_LIMITED`        | Throttled; `retryAfterSeconds` present                                                       |
-| `RESEND_COOLDOWN`     | Resend requested before the cooldown elapsed                                                 |
-| `SERVICE_UNAVAILABLE` | Delivery provider rejected/failed/crashed; challenge voided; safe to retry                   |
-| `INTERNAL`            | Unhandled server error (callable default); no details leaked                                 |
+| Code                   | Meaning                                                                                      |
+| ---------------------- | -------------------------------------------------------------------------------------------- |
+| `INVALID_REQUEST`      | Malformed or unsupported input                                                               |
+| `CODE_INVALID`         | Generic verification failure (wrong/expired/consumed/locked/voided/unknown/purpose mismatch) |
+| `RATE_LIMITED`         | Throttled; `retryAfterSeconds` present                                                       |
+| `RESEND_COOLDOWN`      | Resend requested before the cooldown elapsed                                                 |
+| `SERVICE_UNAVAILABLE`  | Delivery provider rejected/failed/crashed; challenge voided; safe to retry                   |
+| `IDENTITY_UNAVAILABLE` | Post-verification identity/token failure; challenge stays consumed; request a fresh OTP      |
+| `INTERNAL`             | Unhandled server error (callable default); no details leaked                                 |
 
 Reserved for later phases: `CHALLENGE_EXPIRED`, `TOO_MANY_ATTEMPTS` (audit-only today; the
 public response stays generic).
@@ -144,6 +152,62 @@ public response stays generic).
 ## 7. Cross-cutting semantics
 
 - Idempotency: no automatic retries; a failed request never silently sends a second SMS.
-- Logging: structured events (`otp.request.created`, `otp.verification.failed`, …) contain
-  challenge/job ids only — no codes, no phone numbers — verified by tests.
+- Logging: structured events (`otp.request.created`, `otp.verification.failed`,
+  `identity.*`, `token.*`) contain challenge/job ids only — no codes, raw phone numbers,
+  internal identity reasons, or custom tokens — verified by tests.
 - CORS/auth: App Check adoption remains an open decision (D-018).
+
+## 8. Client onboarding handoff (Phase 3.5)
+
+No client application, profile store, or role model exists in this repository. The client
+must exchange the `verifyOtp` custom token with Firebase Auth, then use the authenticated
+UID with the CoolBus-owned profile/authorization APIs. The service never issues profiles,
+roles, or custom claims.
+
+Using the app's existing Firebase configuration (the emulator harness additionally calls
+`connectAuthEmulator` and is test-only):
+
+```js
+const functions = getFunctions(app, 'asia-south1');
+const verify = httpsCallable(functions, 'verifyOtp');
+const { data: verified } = await verify({
+  challengeId,
+  code,
+  purpose: 'sign-in',
+  phone,
+});
+
+const credential = await signInWithCustomToken(getAuth(app), verified.customToken);
+const uid = credential.user.uid; // canonical authenticated identity
+const idToken = await credential.user.getIdToken();
+```
+
+- Exchange the token immediately. Do not persist or log the custom token; the Firebase SDK
+  persists the resulting session using its platform storage. App-restart session
+  restoration is therefore SDK/platform behavior and is not verified in this repository.
+- Use `currentUser.uid` as the only client-side identity. Never send a client-authored UID,
+  role, operator ID, student ID, or profile-ownership field as authorization.
+- Send the Firebase ID token to profile/authorization backends; those backends must verify
+  it and derive the UID server-side.
+- `auth/invalid-custom-token` (malformed, invalid, or expired in production): discard the
+  token and obtain a fresh OTP; do not retry the same token.
+- `auth/network-request-failed`: retry the exchange with the same unexpired token. If the
+  token expires, obtain a fresh OTP. The OTP challenge was already consumed.
+- Backend failures before token issuance use the codes in section 3; `IDENTITY_UNAVAILABLE`
+  means a fresh OTP is required.
+
+Profile/onboarding contract (CoolBus-owned, **not implemented or verified here**):
+
+1. Verify the Firebase ID token server-side and take the UID from it.
+2. Look up the profile by that UID (document ID or unique key); never by a client-supplied
+   UID or phone number.
+3. Existing complete profile → restore it and route to the role-appropriate destination.
+4. Missing/incomplete profile → route to registration/onboarding; create/update
+   idempotently using the verified UID so retries cannot duplicate profiles.
+5. Read roles, registration state, and ownership from trusted persisted records only; never
+   accept them from request fields or custom claims.
+
+Emulator limitation: the Firebase Auth emulator does not validate JWT signatures or expiry.
+The Phase 3.5 harness verifies successful exchange, malformed-token rejection, network
+failure/retry, and session observation; expired-token rejection and production token
+behavior remain Phase 3.7 validation items.

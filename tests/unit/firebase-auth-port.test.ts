@@ -22,6 +22,7 @@ function authStub(handlers: {
   readonly getUser?: (uid: string) => Promise<unknown>;
   readonly getUserByPhoneNumber?: (e164: string) => Promise<unknown>;
   readonly createUser?: (properties: unknown) => Promise<unknown>;
+  readonly createCustomToken?: (uid: string) => Promise<string>;
 }): Auth {
   return {
     getUser:
@@ -38,6 +39,11 @@ function authStub(handlers: {
       handlers.createUser ??
       (async () => {
         throw new Error('unexpected createUser');
+      }),
+    createCustomToken:
+      handlers.createCustomToken ??
+      (async () => {
+        throw new Error('unexpected createCustomToken');
       }),
   } as unknown as Auth;
 }
@@ -130,6 +136,38 @@ describe('FirebaseAuthPort lookups', () => {
     expect(unknownError).toBeInstanceOf(AuthUnavailableError);
     expect((unknownError as AuthPortError).authErrorCode).toBeNull();
     expect(unknownError).not.toBeInstanceOf(AuthPhoneAlreadyExistsError);
+  });
+});
+
+describe('FirebaseAuthPort custom tokens', () => {
+  it('mints a custom token for exactly the requested UID', async () => {
+    const calls: string[] = [];
+    const port = new FirebaseAuthPort(
+      authStub({
+        createCustomToken: async (uid) => {
+          calls.push(uid);
+          return `token-for-${uid}`;
+        },
+      }),
+    );
+
+    await expect(port.createCustomToken('uid_1')).resolves.toBe('token-for-uid_1');
+    expect(calls).toEqual(['uid_1']);
+  });
+
+  it('maps minting failures to AuthUnavailableError without retaining payload details', async () => {
+    const port = new FirebaseAuthPort(
+      authStub({
+        createCustomToken: async () => {
+          throw firebaseError('auth/internal-error');
+        },
+      }),
+    );
+
+    const error = await capture(port.createCustomToken('uid_1'));
+    expect(error).toBeInstanceOf(AuthUnavailableError);
+    expect((error as AuthPortError).authErrorCode).toBe('auth/internal-error');
+    expect((error as Error).message).not.toContain('token-for');
   });
 });
 

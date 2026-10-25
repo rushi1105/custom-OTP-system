@@ -22,6 +22,15 @@ export default tseslint.config(
     },
   },
   {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+      },
+    },
+  },
+  {
     files: ['functions/src/**/*.ts'],
     rules: {
       'no-restricted-properties': [

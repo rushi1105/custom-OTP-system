@@ -267,10 +267,8 @@ describe('IdentityResolver.resolveExisting — failure handling and invariants',
     const unavailableLog = fixture.logger.entries.find(
       (entry) => entry.event === 'identity.unavailable',
     );
-    expect(unavailableLog?.fields).toMatchObject({
-      challengeId: CHALLENGE_ID,
-      reason: 'store_unavailable',
-    });
+    expect(unavailableLog?.fields).toMatchObject({ challengeId: CHALLENGE_ID });
+    expect(unavailableLog?.fields).not.toHaveProperty('reason');
     expect(unavailableLog?.fields).not.toHaveProperty('phoneHash');
   });
 

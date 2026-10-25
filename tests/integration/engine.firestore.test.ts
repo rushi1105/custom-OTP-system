@@ -8,6 +8,7 @@ import { OtpEngine } from '../../functions/src/otp/engine';
 import { DEFAULT_OTP_POLICY } from '../../functions/src/otp/policy';
 import { FirestoreDocumentDatabase } from '../../functions/src/storage/firestore-database';
 import { COLLECTIONS } from '../../functions/src/storage/types';
+import { hashPhone } from '../../functions/src/otp/hashing';
 import { FixedClock } from '../helpers/fixed-clock';
 import { RecordingAuditSink } from '../helpers/recording-audit-sink';
 import { RecordingLogger } from '../helpers/recording-logger';
@@ -97,7 +98,13 @@ describe.skipIf(!process.env['FIRESTORE_EMULATOR_HOST'])(
         requesterHash: REQUESTER,
       });
 
-      expect(result).toEqual({ outcome: 'verified', purpose: 'sign-in' });
+      expect(result).toMatchObject({
+        outcome: 'verified',
+        purpose: 'sign-in',
+        challengeId,
+        e164: PHONE,
+        phoneHash: hashPhone(TEST_PEPPER, PHONE),
+      });
       const snapshot = await firestore.collection(COLLECTIONS.challenges).doc(challengeId).get();
       expect(snapshot.data()).toMatchObject({ status: 'consumed' });
       const jobDocs = await firestore.collection(COLLECTIONS.deliveryJobs).get();

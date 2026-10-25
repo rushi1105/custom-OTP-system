@@ -3,7 +3,7 @@
   "version": "0.2.1",
   "private": true,
   "description": "Shared contracts (delivery provider interface and related types) for the OTP Infrastructure Service",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [

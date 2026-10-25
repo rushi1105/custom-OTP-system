@@ -33,8 +33,8 @@ export interface AuthUserRecord {
  * (Firebase adapter in subphase 3.3c; fakes in tests). No Firebase imports may
  * appear in `functions/src/identity/**` (enforced by a static test).
  *
- * Token minting is intentionally absent: it belongs to subphase 3.4 and must
- * not exist in the identity domain or the Auth adapter before then.
+ * Token minting is intentionally separate (`CustomTokenIssuer` in the Auth
+ * adapter) and must not enter the identity domain.
  */
 export interface AuthPort {
   getUser(uid: string): Promise<AuthUserRecord | null>;
@@ -65,6 +65,31 @@ export type IdentityLinkFillResult =
   | { readonly outcome: 'filled' }
   | { readonly outcome: 'refreshed' }
   | { readonly outcome: 'conflict'; readonly reason: IdentityFailureReason };
+
+export interface EnsureIdentityInput {
+  /** Canonical E.164 admitted only through the ID-9 challenge binding. */
+  readonly e164: string;
+  readonly challengeId: string;
+  /** Phase 3 creation is restricted to the `sign-in` purpose. */
+  readonly purpose: string;
+  readonly requesterHash: string | null;
+}
+
+/**
+ * Internal result of the creation orchestration (wired to the callable response
+ * in Phase 3.4). `recovered` means an existing Auth user was found during
+ * claim recovery/finalization; no user was created by this attempt.
+ */
+export type IdentityAssuranceResult =
+  | {
+      readonly status: 'resolved';
+      readonly uid: string;
+      readonly source: IdentityResolutionSource;
+    }
+  | { readonly status: 'created'; readonly uid: string }
+  | { readonly status: 'recovered'; readonly uid: string }
+  | { readonly status: 'conflict'; readonly reason: IdentityFailureReason }
+  | { readonly status: 'unavailable'; readonly reason: IdentityFailureReason };
 
 export interface AcquireCreationClaimInput {
   readonly phoneHash: string;

@@ -18,7 +18,8 @@ function listTypeScriptFiles(directory: string): string[] {
 /**
  * Identity-domain boundaries: the domain talks only to the AuthPort /
  * IdentityStore ports. Firebase imports are confined to the infrastructure
- * adapters under `functions/src/auth/**`. Token minting is absent until 3.4.
+ * adapters under `functions/src/auth/**`. Token minting is confined to the
+ * Auth adapter and never enters the identity domain.
  */
 describe('identity domain and Auth adapter boundaries', () => {
   const root = process.cwd();
@@ -40,12 +41,12 @@ describe('identity domain and Auth adapter boundaries', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('declares account creation only in the identity port (no implementation yet)', () => {
+  it('keeps account creation confined to the port and creation service', () => {
     const offenders: string[] = [];
     for (const file of listTypeScriptFiles(identityDir)) {
       const name = file.replace(/\\/g, '/');
-      if (name.endsWith('/types.ts')) {
-        continue; // sole allowed declaration site: the AuthPort interface
+      if (name.endsWith('/types.ts') || name.endsWith('/creation.ts')) {
+        continue; // declaration + approved orchestration
       }
       if (readFileSync(file, 'utf8').includes('createUserWithPhone(')) {
         offenders.push(relative(root, file));
@@ -54,16 +55,19 @@ describe('identity domain and Auth adapter boundaries', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('contains no custom-token minting in the identity domain or Auth adapter', () => {
+  it('contains no custom-token minting in the identity domain', () => {
     const offenders: string[] = [];
-    for (const directory of [identityDir, authDir]) {
-      for (const file of listTypeScriptFiles(directory)) {
-        if (readFileSync(file, 'utf8').includes('createCustomToken')) {
-          offenders.push(relative(root, file));
-        }
+    for (const file of listTypeScriptFiles(identityDir)) {
+      if (readFileSync(file, 'utf8').includes('createCustomToken')) {
+        offenders.push(relative(root, file));
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  it('confines custom-token minting to the Firebase Auth adapter', () => {
+    const adapter = join(authDir, 'firebase-auth-port.ts');
+    expect(readFileSync(adapter, 'utf8')).toContain('createCustomToken');
   });
 
   it('keeps logging out of the Firebase Auth adapter', () => {
@@ -71,6 +75,5 @@ describe('identity domain and Auth adapter boundaries', () => {
     const content = readFileSync(adapter, 'utf8');
     expect(content).not.toMatch(/console\.(log|info|warn|error|debug)/);
     expect(content).not.toMatch(/\bLogger\b/);
-    expect(content).not.toContain('createCustomToken');
   });
 });

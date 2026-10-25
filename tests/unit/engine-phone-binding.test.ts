@@ -74,7 +74,13 @@ describe('OtpEngine phone binding (ID-9)', () => {
 
     const result = await verify(fixture, challengeId, code);
 
-    expect(result).toEqual({ outcome: 'verified', purpose: 'sign-in' });
+    expect(result).toMatchObject({
+      outcome: 'verified',
+      purpose: 'sign-in',
+      challengeId,
+      e164: PHONE,
+      phoneHash: hashPhone(fixture.pepper, PHONE),
+    });
     expect(challengeRecord(fixture, challengeId)?.status).toBe('consumed');
   });
 
@@ -110,7 +116,13 @@ describe('OtpEngine phone binding (ID-9)', () => {
       }
       const { challengeId, code } = await createChallenge(fixture);
       const result = await verify(fixture, challengeId, code, form);
-      expect(result).toEqual({ outcome: 'verified', purpose: 'sign-in' });
+      expect(result).toMatchObject({
+        outcome: 'verified',
+        purpose: 'sign-in',
+        challengeId,
+        e164: PHONE,
+        phoneHash: hashPhone(fixture.pepper, PHONE),
+      });
     }
   });
 
@@ -151,7 +163,13 @@ describe('OtpEngine phone binding (ID-9)', () => {
 
     // The challenge remains usable with the correct phone and code.
     const result = await verify(fixture, challengeId, code);
-    expect(result).toEqual({ outcome: 'verified', purpose: 'sign-in' });
+    expect(result).toMatchObject({
+      outcome: 'verified',
+      purpose: 'sign-in',
+      challengeId,
+      e164: PHONE,
+      phoneHash: hashPhone(fixture.pepper, PHONE),
+    });
   });
 
   it('keeps expiry and single-use behavior for the correct phone', async () => {
@@ -209,7 +227,13 @@ describe('OtpEngine phone binding (ID-9)', () => {
     }
 
     const verified = await verify(fixture, challengeId, code);
-    expect(verified).toEqual({ outcome: 'verified', purpose: 'sign-in' });
+    expect(verified).toMatchObject({
+      outcome: 'verified',
+      purpose: 'sign-in',
+      challengeId,
+      e164: PHONE,
+      phoneHash: hashPhone(fixture.pepper, PHONE),
+    });
   });
 
   it('keeps wrong-code attempt counting and verification rate limits intact', async () => {

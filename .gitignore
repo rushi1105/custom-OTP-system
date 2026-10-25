@@ -14,6 +14,8 @@ coverage/
 .env
 .env.*
 !.env.example
+.secret.local
+*.secret.local
 
 # Firebase emulator and CLI artifacts
 .firebase/

@@ -62,7 +62,13 @@ describe('OtpEngine.verifyChallenge', () => {
 
     const result = await verify(fixture, challengeId, code);
 
-    expect(result).toEqual({ outcome: 'verified', purpose: 'sign-in' });
+    expect(result).toMatchObject({
+      outcome: 'verified',
+      purpose: 'sign-in',
+      challengeId,
+      e164: PHONE,
+      phoneHash: hashPhone(fixture.pepper, PHONE),
+    });
     const challenge = fixture.db.getDocument<ChallengeRecord>(
       docRef(COLLECTIONS.challenges, challengeId),
     );
@@ -161,7 +167,13 @@ describe('OtpEngine.verifyChallenge', () => {
     expect(mismatch).toMatchObject({ outcome: 'invalid', internalReason: 'purpose_mismatch' });
 
     const correctPurpose = await verify(fixture, challengeId, code, 'phone-verification');
-    expect(correctPurpose).toEqual({ outcome: 'verified', purpose: 'phone-verification' });
+    expect(correctPurpose).toMatchObject({
+      outcome: 'verified',
+      purpose: 'phone-verification',
+      challengeId,
+      e164: PHONE,
+      phoneHash: hashPhone(fixture.pepper, PHONE),
+    });
   });
 
   it('binds codes to their own challenge (phone-number binding)', async () => {

@@ -1,6 +1,12 @@
 import { HttpsError } from 'firebase-functions/v2/https';
 
+import type { AuditSink } from '../audit/audit-log.js';
+import type { CustomTokenIssuer } from '../auth/token-issuer.js';
+import { recordIdentityAudit } from '../identity/audit.js';
+import type { EnsureIdentityInput, IdentityAssuranceResult } from '../identity/types.js';
+import type { Logger } from '../logging.js';
 import type { OtpEngine } from '../otp/engine.js';
+import type { VerifyOutcome } from '../otp/types.js';
 
 export interface ApiContext {
   readonly requesterHash: string;
@@ -14,7 +20,21 @@ export interface RequestOtpResponse {
 
 export interface VerifyOtpResponse {
   readonly verified: true;
-  readonly purpose: string;
+  readonly purpose: 'sign-in';
+  readonly customToken: string;
+}
+
+export interface IdentityAssurance {
+  ensureIdentity(input: EnsureIdentityInput): Promise<IdentityAssuranceResult>;
+}
+
+export interface VerifyOtpDependencies {
+  readonly engine: OtpEngine;
+  readonly identity: IdentityAssurance;
+  readonly tokens: CustomTokenIssuer;
+  readonly audit: AuditSink;
+  readonly logger: Logger;
+  readonly clock: () => Date;
 }
 
 export async function handleRequestOtp(
@@ -26,6 +46,9 @@ export async function handleRequestOtp(
     throw invalidRequest();
   }
   const payload = data as Record<string, unknown>;
+  if (payload['purpose'] !== 'sign-in') {
+    throw invalidRequest();
+  }
   const result = await engine.requestChallenge({
     phoneRaw: payload['phone'],
     purpose: payload['purpose'],
@@ -60,7 +83,7 @@ export async function handleRequestOtp(
 }
 
 export async function handleVerifyOtp(
-  engine: OtpEngine,
+  deps: VerifyOtpDependencies,
   data: unknown,
   context: ApiContext,
 ): Promise<VerifyOtpResponse> {
@@ -68,7 +91,10 @@ export async function handleVerifyOtp(
     throw invalidRequest();
   }
   const payload = data as Record<string, unknown>;
-  const result = await engine.verifyChallenge({
+  if (payload['purpose'] !== 'sign-in') {
+    throw invalidRequest();
+  }
+  const result = await deps.engine.verifyChallenge({
     challengeId: payload['challengeId'],
     code: payload['code'],
     purpose: payload['purpose'],
@@ -78,7 +104,7 @@ export async function handleVerifyOtp(
 
   switch (result.outcome) {
     case 'verified':
-      return { verified: true, purpose: result.purpose };
+      return completeVerification(deps, result, context);
     case 'invalid_input':
       throw invalidRequest();
     case 'invalid':
@@ -93,6 +119,71 @@ export async function handleVerifyOtp(
   }
 }
 
+async function completeVerification(
+  deps: VerifyOtpDependencies,
+  result: Extract<VerifyOutcome, { readonly outcome: 'verified' }>,
+  context: ApiContext,
+): Promise<VerifyOtpResponse> {
+  let assurance: IdentityAssuranceResult;
+  try {
+    assurance = await deps.identity.ensureIdentity({
+      e164: result.e164,
+      challengeId: result.challengeId,
+      purpose: result.purpose,
+      requesterHash: context.requesterHash,
+    });
+  } catch {
+    deps.logger.error('identity.unavailable', { challengeId: result.challengeId });
+    throw identityUnavailable();
+  }
+
+  if (assurance.status === 'conflict' || assurance.status === 'unavailable') {
+    throw identityUnavailable();
+  }
+  const uid = assurance.uid;
+
+  let customToken: string;
+  try {
+    customToken = await deps.tokens.createCustomToken(uid);
+  } catch {
+    await recordTokenAudit(deps, result, context, uid, 'failure');
+    deps.logger.warn('token.issue_failed', { challengeId: result.challengeId });
+    throw identityUnavailable();
+  }
+
+  await recordTokenAudit(deps, result, context, uid, 'success');
+  deps.logger.info('token.issued', { challengeId: result.challengeId });
+  return { verified: true, purpose: 'sign-in', customToken };
+}
+
+async function recordTokenAudit(
+  deps: VerifyOtpDependencies,
+  result: Extract<VerifyOutcome, { readonly outcome: 'verified' }>,
+  context: ApiContext,
+  uid: string,
+  outcome: 'success' | 'failure',
+): Promise<void> {
+  await recordIdentityAudit(deps.audit, deps.logger, {
+    type: outcome === 'success' ? 'token.issued' : 'token.issue_failed',
+    occurredAt: deps.clock().toISOString(),
+    actorType: 'client',
+    actorHash: context.requesterHash,
+    purpose: 'sign-in',
+    challengeId: result.challengeId,
+    jobId: null,
+    phoneHash: result.phoneHash,
+    uid,
+    outcome,
+    reasonCode: outcome === 'success' ? null : 'auth_unavailable',
+  });
+}
+
 function invalidRequest(): HttpsError {
   return new HttpsError('invalid-argument', 'Invalid request', { code: 'INVALID_REQUEST' });
+}
+
+function identityUnavailable(): HttpsError {
+  return new HttpsError('unavailable', 'Unable to complete sign-in right now', {
+    code: 'IDENTITY_UNAVAILABLE',
+  });
 }

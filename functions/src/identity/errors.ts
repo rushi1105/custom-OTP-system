@@ -10,6 +10,7 @@ export type IdentityFailureReason =
   | 'conflict_user_disabled'
   | 'conflict_phone_mismatch'
   | 'conflict_uid_mismatch'
+  | 'phone_already_exists_unresolved'
   | 'claim_pending'
   | 'claim_expired'
   | 'auth_unavailable'
@@ -28,7 +29,7 @@ export class IdentityInvariantError extends Error {
 }
 
 export function isIdentityConflict(reason: IdentityFailureReason): boolean {
-  return reason.startsWith('conflict_');
+  return reason === 'phone_already_exists_unresolved' || reason.startsWith('conflict_');
 }
 
 /**

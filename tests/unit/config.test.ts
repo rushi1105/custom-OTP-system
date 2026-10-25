@@ -114,6 +114,30 @@ describe('loadRuntimeConfig', () => {
     expect(config.pepperVersion).toBe(3);
   });
 
+  it('prefers a Secret Manager pepper override over the environment value', () => {
+    const secretPepper = 'secret-manager-pepper-0123456789abcdef0123456789abcdef';
+    const config = loadRuntimeConfig(
+      {
+        OTP_HASH_PEPPER: VALID_PEPPER,
+        OTP_ENVIRONMENT: 'test',
+        DELIVERY_PROVIDER: 'mock',
+        OTP_HASH_PEPPER_VERSION: '2',
+      },
+      secretPepper,
+    );
+    expect(config.pepper).toBe(secretPepper);
+    expect(config.pepperVersion).toBe(2);
+  });
+
+  it('fails closed when the Secret Manager pepper override is unusable', () => {
+    expect(() =>
+      loadRuntimeConfig({ OTP_ENVIRONMENT: 'test', DELIVERY_PROVIDER: 'mock' }, 'too-short'),
+    ).toThrow(/OTP_HASH_PEPPER/);
+    expect(() =>
+      loadRuntimeConfig({ OTP_ENVIRONMENT: 'test', DELIVERY_PROVIDER: 'mock' }, ''),
+    ).toThrow(/OTP_HASH_PEPPER/);
+  });
+
   it('rejects deployed configurations without explicit provider selection', () => {
     expect(() =>
       loadRuntimeConfig({

@@ -451,7 +451,13 @@ export class OtpEngine {
         reasonCode: null,
       });
       this.deps.logger.info('otp.verification.succeeded', { challengeId });
-      return { outcome: 'verified', purpose };
+      return {
+        outcome: 'verified',
+        purpose,
+        e164: phone,
+        phoneHash: txResult.phoneHash,
+        challengeId,
+      };
     }
 
     if (txResult.kind === 'rate_limited') {

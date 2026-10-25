@@ -124,8 +124,8 @@ export function resolveDeliveryProviderName(
   return raw;
 }
 
-export function loadRuntimeConfig(env: NodeJS.ProcessEnv): RuntimeConfig {
-  const pepper = env['OTP_HASH_PEPPER'];
+export function loadRuntimeConfig(env: NodeJS.ProcessEnv, pepperOverride?: string): RuntimeConfig {
+  const pepper = pepperOverride !== undefined ? pepperOverride : env['OTP_HASH_PEPPER'];
   if (typeof pepper !== 'string' || pepper.length < MIN_PEPPER_LENGTH) {
     throw new Error(
       `OTP_HASH_PEPPER must be set to a random string of at least ${MIN_PEPPER_LENGTH} characters`,

@@ -6,6 +6,7 @@ import {
   AuthUnavailableError,
 } from '../identity/errors.js';
 import type { AuthPort, AuthUserRecord } from '../identity/types.js';
+import type { CustomTokenIssuer } from './token-issuer.js';
 
 const USER_NOT_FOUND = 'auth/user-not-found';
 const INVALID_PHONE = 'auth/invalid-phone-number';
@@ -22,10 +23,9 @@ const PHONE_ALREADY_EXISTS_ALIAS = 'auth/phone-already-exists';
  * - Every other failure maps to AuthUnavailableError. Unknown or unrelated
  *   provider errors are never reinterpreted as duplicate-phone outcomes.
  * - No retries, no logging, no phone/token payload retention.
- *
- * Token minting is intentionally absent (Phase 3.4).
+ * - Custom-token minting is the only token operation and uses the UID only.
  */
-export class FirebaseAuthPort implements AuthPort {
+export class FirebaseAuthPort implements AuthPort, CustomTokenIssuer {
   private readonly auth: Auth;
 
   constructor(auth: Auth) {
@@ -71,6 +71,14 @@ export class FirebaseAuthPort implements AuthPort {
         throw new AuthInvalidPhoneError('Invalid phone number', code);
       }
       throw new AuthUnavailableError('Firebase Auth user creation failed', code);
+    }
+  }
+
+  async createCustomToken(uid: string): Promise<string> {
+    try {
+      return await this.auth.createCustomToken(uid);
+    } catch (error) {
+      throw new AuthUnavailableError('Firebase custom-token minting failed', errorCodeOf(error));
     }
   }
 }

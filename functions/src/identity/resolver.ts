@@ -1,5 +1,6 @@
 import type { AuditSink, NewAuditEvent } from '../audit/audit-log.js';
 import type { Logger } from '../logging.js';
+import { recordIdentityAudit } from './audit.js';
 import { hashPhone } from '../otp/hashing.js';
 import { normalizePhone } from '../otp/phone.js';
 import { isPendingCreationClaimActive } from './claims.js';
@@ -35,7 +36,7 @@ interface TryResult<T> {
 }
 
 /**
- * Existing-identity resolution (docs/IDENTITY_DESIGN.md §3).
+ * Existing-identity resolution (docs/IDENTITY_DESIGN.md Â§3).
  *
  * Security invariants:
  * - Accepts only canonical E.164 admitted through the ID-9 challenge binding;
@@ -150,7 +151,7 @@ export class IdentityResolver {
       return this.conflict(fill.reason, input, phoneHash, user.uid, nowIso);
     }
 
-    await this.recordAudit({
+    await recordIdentityAudit(this.deps.audit, this.deps.logger, {
       type: 'identity.link.filled',
       occurredAt: nowIso,
       actorType: 'client',
@@ -175,7 +176,7 @@ export class IdentityResolver {
     nowIso: string,
   ): Promise<void> {
     this.deps.logger.info('identity.resolved', { challengeId: input.challengeId, source });
-    await this.recordAudit({
+    await recordIdentityAudit(this.deps.audit, this.deps.logger, {
       type: 'identity.resolved',
       occurredAt: nowIso,
       actorType: 'client',
@@ -197,7 +198,7 @@ export class IdentityResolver {
     uid: string | null,
     nowIso: string,
   ): Promise<IdentityResolutionResult> {
-    this.deps.logger.warn('identity.conflict', { challengeId: input.challengeId, reason });
+    this.deps.logger.warn('identity.conflict', { challengeId: input.challengeId });
     const event: NewAuditEvent = {
       type: 'identity.conflict',
       occurredAt: nowIso,
@@ -211,23 +212,12 @@ export class IdentityResolver {
       reasonCode: reason,
     };
     // Omit uid entirely when unknown (D-031 ID-7: only where relevant).
-    await this.recordAudit(uid === null ? event : { ...event, uid });
+    await recordIdentityAudit(
+      this.deps.audit,
+      this.deps.logger,
+      uid === null ? event : { ...event, uid },
+    );
     return { status: 'conflict', reason };
-  }
-
-  /**
-   * Audit is best-effort for identity resolution (Phase 3.1 review finding F1):
-   * a sink failure must never turn a successful resolution (or a settled
-   * conflict) into an unexpected request failure. This mirrors SafeAuditSink
-   * semantics at the call site so correctness does not depend on how the
-   * composition root wraps the sink.
-   */
-  private async recordAudit(event: NewAuditEvent): Promise<void> {
-    try {
-      await this.deps.audit.record(event);
-    } catch {
-      this.deps.logger.warn('audit.write_failed', { eventType: event.type });
-    }
   }
 
   private unavailable(
@@ -237,7 +227,6 @@ export class IdentityResolver {
   ): IdentityResolutionResult {
     this.deps.logger.warn('identity.unavailable', {
       challengeId: input.challengeId,
-      reason,
       occurredAt: nowIso,
     });
     return { status: 'unavailable', reason };

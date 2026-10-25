@@ -3,7 +3,7 @@
   "version": "0.2.1",
   "private": true,
   "description": "Provider-independent OTP authentication backend with Firebase identity preservation",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "engines": {
     "node": ">=22.13.0"
   },
@@ -21,6 +21,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "firebase emulators:exec --only firestore,auth --project demo-otp-infrastructure-service \"vitest run --config vitest.integration.mts\"",
+    "deploy:preflight": "node scripts/deployment-preflight.mjs",
+    "seed:test-challenge": "node scripts/seed-isolated-test-challenge.mjs",
     "emulators": "firebase emulators:start --project demo-otp-infrastructure-service",
     "clean": "npm run clean --workspaces --if-present"
   },

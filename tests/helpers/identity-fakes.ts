@@ -33,6 +33,17 @@ import { TEST_PEPPER, TEST_PEPPER_VERSION, TEST_START_ISO } from './engine-fixtu
 export class InMemoryIdentityStore implements IdentityStore {
   private readonly links = new Map<string, IdentityLinkRecord>();
 
+  readonly acquireClaimCalls: { phoneHash: string; claimId: string }[] = [];
+  readonly finalizeClaimCalls: { phoneHash: string; claimId: string; uid: string }[] = [];
+  readonly releaseClaimCalls: { phoneHash: string; claimId: string }[] = [];
+  failAcquireClaim = false;
+  failFinalizeClaim = false;
+  failReleaseClaim = false;
+  nextAcquireResults: ClaimAcquisitionResult[] = [];
+  onAcquireResult: ((result: ClaimAcquisitionResult) => void) | null = null;
+  nextFinalizeResult: ClaimFinalizationResult | null = null;
+  onNextFinalizeResult: (() => void) | null = null;
+
   readonly getLinkCalls: string[] = [];
   readonly fillCalls: string[] = [];
   failGetLink = false;
@@ -110,6 +121,17 @@ export class InMemoryIdentityStore implements IdentityStore {
   }
 
   async acquireCreationClaim(input: AcquireCreationClaimInput): Promise<ClaimAcquisitionResult> {
+    this.acquireClaimCalls.push({ phoneHash: input.phoneHash, claimId: input.claimId });
+    if (this.failAcquireClaim) {
+      throw new Error('identity store unavailable');
+    }
+    if (this.nextAcquireResults.length > 0) {
+      const result = this.nextAcquireResults.shift();
+      if (result !== undefined) {
+        this.onAcquireResult?.(result);
+        return result;
+      }
+    }
     const nowIso = new Date(input.nowMs).toISOString();
     const existing = this.links.get(input.phoneHash);
     if (existing === undefined) {
@@ -156,6 +178,21 @@ export class InMemoryIdentityStore implements IdentityStore {
   }
 
   async finalizeCreationClaim(input: FinalizeCreationClaimInput): Promise<ClaimFinalizationResult> {
+    this.finalizeClaimCalls.push({
+      phoneHash: input.phoneHash,
+      claimId: input.claimId,
+      uid: input.uid,
+    });
+    if (this.failFinalizeClaim) {
+      throw new Error('identity store unavailable');
+    }
+    if (this.nextFinalizeResult !== null) {
+      const result = this.nextFinalizeResult;
+      this.nextFinalizeResult = null;
+      this.onNextFinalizeResult?.();
+      this.onNextFinalizeResult = null;
+      return result;
+    }
     const existing = this.links.get(input.phoneHash);
     if (existing === undefined) {
       return { outcome: 'claim_lost' };
@@ -191,6 +228,10 @@ export class InMemoryIdentityStore implements IdentityStore {
   }
 
   async releaseCreationClaim(input: ReleaseCreationClaimInput): Promise<ClaimReleaseResult> {
+    this.releaseClaimCalls.push({ phoneHash: input.phoneHash, claimId: input.claimId });
+    if (this.failReleaseClaim) {
+      throw new Error('identity store unavailable');
+    }
     const existing = this.links.get(input.phoneHash);
     if (existing === undefined) {
       return { outcome: 'no_claim' };
@@ -216,6 +257,10 @@ export class FakeAuthPort implements AuthPort {
   failGetUser = false;
   failGetUserByPhoneNumber = false;
   failCreateUser = false;
+  lookupByPhoneQueue: (AuthUserRecord | null | Error)[] = [];
+  nextCreateError: Error | null = null;
+  readonly lookupPhoneCalls: string[] = [];
+  readonly createCalls: string[] = [];
 
   seedUser(user: AuthUserRecord): void {
     this.usersByUid.set(user.uid, { ...user });
@@ -224,17 +269,34 @@ export class FakeAuthPort implements AuthPort {
     }
   }
 
+  get userCount(): number {
+    return this.usersByUid.size;
+  }
+
   async getUser(uid: string): Promise<AuthUserRecord | null> {
     if (this.failGetUser) {
-      throw new Error('auth unavailable');
+      throw new AuthUnavailableError('auth unavailable', 'auth/internal-error');
     }
     const user = this.usersByUid.get(uid);
     return user === undefined ? null : { ...user };
   }
 
   async getUserByPhoneNumber(e164: string): Promise<AuthUserRecord | null> {
+    this.lookupPhoneCalls.push(e164);
     if (this.failGetUserByPhoneNumber) {
-      throw new Error('auth unavailable');
+      throw new AuthUnavailableError('auth unavailable', 'auth/internal-error');
+    }
+    if (this.lookupByPhoneQueue.length > 0) {
+      const next = this.lookupByPhoneQueue.shift();
+      if (next instanceof Error) {
+        throw next;
+      }
+      if (next === null) {
+        return null;
+      }
+      if (next !== undefined) {
+        return { ...next };
+      }
     }
     const uid = this.usersByPhone.get(e164);
     if (uid === undefined) {
@@ -245,8 +307,14 @@ export class FakeAuthPort implements AuthPort {
   }
 
   async createUserWithPhone(e164: string): Promise<AuthUserRecord> {
+    this.createCalls.push(e164);
     if (this.failCreateUser) {
       throw new AuthUnavailableError('auth unavailable', 'auth/internal-error');
+    }
+    if (this.nextCreateError !== null) {
+      const error = this.nextCreateError;
+      this.nextCreateError = null;
+      throw error;
     }
     if (this.usersByPhone.has(e164)) {
       throw new AuthPhoneAlreadyExistsError(
