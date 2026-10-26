@@ -103,7 +103,7 @@ checks on Node 22.
 
 ## Local development
 
-Requirements: Node.js 22.13+ (verified locally on Node 24), npm 10+, and Java 11+ for the
+Requirements: Node.js 22.13+ (verified locally on Node 24), npm 10+, and Java 21+ for the
 Firestore emulator.
 
 ```bash
